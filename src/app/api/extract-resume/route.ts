@@ -19,7 +19,10 @@ export async function POST(req: NextRequest) {
 You are an expert ATS (Applicant Tracking System) parser.
 Extract the following resume details into a structured JSON format. 
 Make sure to extract all hyperlinks (especially for GitHub, LinkedIn, portfolios, etc.) found in the text.
-Only output valid JSON. Do not include markdown code blocks.
+Only output valid JSON. Do not include markdown code blocks. 
+The projects, experience, hackathons, etc have links embedded in texts, make sure to format them right in those respective sections.
+If date or duration is given in years, convert all the formats to "Feb 2022 - Mar 2023". If date or duration is not given, do not add it.
+Overall, the resumes might contain information from work experience, projects, skills to extracurriculars like hackathons, open-source contributions, competitions, etc. Add all of them to the JSON.
 
 Structure the JSON as follows:
 {
@@ -40,6 +43,7 @@ Structure the JSON as follows:
         {"Point 2"},
         {"Point 3"}
       ],
+      "url": "Link to Internship Certificates if any"
     }
   ],
   "projects": [
@@ -71,7 +75,19 @@ Structure the JSON as follows:
           {"Point 2"},
           {"Point 3"}
         ],
-        "url": "Link to project if any"
+        "url": "Link to project/certificates if any"
+      }
+    ],
+     "open-source": [
+      {
+        "name": "Contributing Organization Name",
+        "duration": "Start Date - End Date",
+        "description": [
+          {"Point 1"},
+          {"Point 2"},
+          {"Point 3"}
+        ],
+        "url": "Link to PRs/badges if any"
       }
     ],
     "competitions": [
@@ -83,7 +99,7 @@ Structure the JSON as follows:
           {"Point 2"},
           {"Point 3"}
         ],
-        "url": "Link to project if any"
+        "url": "Link to certificates if any"
       }
     ],
     "otherExtracurriculars": [
@@ -95,7 +111,7 @@ Structure the JSON as follows:
           {"Point 2"},
           {"Point 3"}
         ],
-        "url": "Link to project if any"
+        "url": "Link to certificates/work if any"
       }
     ]
   }
