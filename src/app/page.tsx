@@ -45,12 +45,7 @@ export default async function Home(props: {
   if (employees !== "all") {
     andConditions.push({ employees })
   }
-  if (stage !== "all") {
-    andConditions.push({ stage })
-  }
-  if (raised !== "all") {
-    andConditions.push({ raised })
-  }
+
 
   const where: Prisma.CompanyWhereInput = andConditions.length > 0 ? { AND: andConditions } : {}
 
@@ -97,8 +92,6 @@ export default async function Home(props: {
     if (industry !== "all") params.set("industry", industry)
     if (sort !== "asc") params.set("sort", sort)
     if (employees !== "all") params.set("employees", employees)
-    if (stage !== "all") params.set("stage", stage)
-    if (raised !== "all") params.set("raised", raised)
     if (page > 1) params.set("page", page.toString())
 
     Object.entries(overrides).forEach(([key, value]) => {
@@ -220,8 +213,6 @@ export default async function Home(props: {
               {industry !== "all" && <input type="hidden" name="industry" value={industry} />}
               {sort !== "asc" && <input type="hidden" name="sort" value={sort} />}
               {employees !== "all" && <input type="hidden" name="employees" value={employees} />}
-              {stage !== "all" && <input type="hidden" name="stage" value={stage} />}
-              {raised !== "all" && <input type="hidden" name="raised" value={raised} />}
             </form>
 
             <div className="flex items-center gap-3 shrink-0">
