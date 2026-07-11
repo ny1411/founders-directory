@@ -60,6 +60,7 @@
 - **Goal:** Finalize the developer-centric, premium experience.
 - **Tasks:**
   - [ ] Add dark mode toggle (default to dark).
+  - [ ] Add lenis for smooth scrooling.
   - [ ] Add loading skeletons for the grid and detail pages.
   - [ ] Generate standard SEO metadata dynamically.
 
