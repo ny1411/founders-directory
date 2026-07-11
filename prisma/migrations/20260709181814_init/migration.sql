@@ -8,7 +8,6 @@ CREATE TABLE "Company" (
     "vcBacker" TEXT,
     "industry" TEXT,
     "employees" TEXT,
-    "seedRound" TEXT,
     "raised" TEXT,
     "website" TEXT,
     "socialLinks" TEXT,

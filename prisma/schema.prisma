@@ -14,6 +14,7 @@ model Company {
   id           String  @id @default(cuid())
   slug         String  @unique
   name         String
+  oneLiner     String?
   description  String?
   logoUrl      String?
   vcBacker     String?
@@ -21,13 +22,11 @@ model Company {
   employees    String?
   location     String?
   foundedYear  Int?
-  stage        String?
-  seedRound    String?
-  raised       String?
-  amountRaised Float?
   website      String?
   twitterUrl   String?
   linkedinUrl  String?
+  tags         String?
+  ycUrl        String?
 
   founders Founder[]
 

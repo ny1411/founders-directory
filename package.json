@@ -23,7 +23,7 @@
   "devDependencies": {
     "@prisma/client": "^6.19.3",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^20.19.43",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "cheerio": "^1.2.0",
@@ -33,7 +33,8 @@
     "playwright": "^1.61.1",
     "prisma": "^6.19.3",
     "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
     "tsx": "^4.23.0",
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   }
 }
