@@ -1,4 +1,4 @@
-# Project Plan: VC Portfolio Scraper & Directory
+# Project Plan: Founders Directory
 
 ## 1. Architecture & Tech Stack
 - **Framework:** Next.js (App Router)
@@ -63,6 +63,34 @@
   - [ ] Add lenis for smooth scrooling.
   - [ ] Add loading skeletons for the grid and detail pages.
   - [ ] Generate standard SEO metadata dynamically.
+
+## Phase 7: Cold DM Generator Feature
+- **Goal:** Implement a feature to generate a custom cold DM based on user's resume and company/founder's description.
+- **Tasks:**
+  - **1. Authentication (Firebase):**
+    - [x] Install and configure Firebase SDK (`firebase` and `firebase-admin`).
+    - [x] Set up Firebase Auth (Google and/or Email/Password).
+    - [x] Create `/login` page with Firebase sign-in UI.
+  - **2. Database & User Profile:**
+    - [x] Update `schema.prisma` to include a `User` model (linked by Firebase UID) that stores `resumeText` or extracted resume details.
+    - [x] Create `/profile` page with a resume upload feature.
+    - [x] Install `pdf-parse` or a similar PDF extraction library.
+    - [x] Implement an API route to handle resume upload, extract text using `pdf-parse`, and return the extracted details.
+    - [x] Provide UI in `/profile` for users to verify the extracted text and hit save.
+  - **3. UI Updates (Company Page):**
+    - [ ] Add "Send Custom Text" button on the founder cards (`src/app/company/[slug]/page.tsx`).
+    - [ ] Implement UI flow: If user clicks the button, allow them to select a founder.
+    - [ ] **Access Guards:**
+      - [ ] If user is not logged in -> redirect to `/login`.
+      - [ ] If user is logged in but has no resume data -> redirect to `/profile` (or a dedicated upload page).
+  - **4. Gemini API Integration:**
+    - [ ] Set up an API route (e.g., `src/app/api/generate-dm/route.ts`) to handle Gemini API requests securely on the server.
+    - [ ] Construct a detailed prompt combining: User's resume data + Company description + Selected Founder's details.
+  - **5. Final User Flow (The Modal/Dialog):**
+    - [ ] Show a loading state while the Gemini API is generating the cold email.
+    - [ ] Display the generated response in an editable text area.
+    - [ ] Add a **"Copy Text"** button (copies to clipboard).
+    - [ ] Add a **"Send to Founder"** button (copies text and prompts user to open the founder's X/LinkedIn profile).
 
 # Expected User Flows
 1. **Initial Load:** User visits `/`. They see a large, premium hero section and a grid of companies.
