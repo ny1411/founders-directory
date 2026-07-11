@@ -67,9 +67,9 @@ Structure the JSON as follows:
         "name": "Hackathon Name",
         "duration": "Start Date - End Date",
         "description": [
-          "Point 1",
-          "Point 2",
-          "Point 3"
+          {"Point 1"},
+          {"Point 2"},
+          {"Point 3"}
         ],
         "url": "Link to project if any"
       }
@@ -79,9 +79,9 @@ Structure the JSON as follows:
         "name": "Competition Name",
         "duration": "Start Date - End Date",
         "description": [
-          "Point 1",
-          "Point 2",
-          "Point 3"
+          {"Point 1"},
+          {"Point 2"},
+          {"Point 3"}
         ],
         "url": "Link to project if any"
       }
@@ -91,9 +91,9 @@ Structure the JSON as follows:
         "name": "Extracurricular Name",
         "duration": "Start Date - End Date",
         "description": [
-          "Point 1",
-          "Point 2",
-          "Point 3"
+          {"Point 1"},
+          {"Point 2"},
+          {"Point 3"}
         ],
         "url": "Link to project if any"
       }
@@ -103,7 +103,7 @@ Structure the JSON as follows:
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.5-flash',
       contents: [
         {
           role: 'user',
