@@ -53,7 +53,7 @@ export async function scrapeYC() {
 
       if (page.isClosed() || !browser.isConnected()) {
         console.log("Browser or page closed unexpectedly. Re-launching...");
-        try { await browser.close(); } catch(e) {}
+        try { await browser.close(); } catch {}
         browser = await chromium.launch({ headless: true });
         page = await browser.newPage();
       }
@@ -219,11 +219,12 @@ export async function scrapeYC() {
       console.log(`Successfully deep-scraped and saved: ${details.name} with ${details.founders.length} founders.`);
       scrapedCount++;
       
-    } catch (e: any) {
-      if (e.name === 'TimeoutError' || e.message?.includes('Timeout')) {
+    } catch (e: unknown) {
+      const err = e as Error;
+      if (err.name === 'TimeoutError' || err.message?.includes('Timeout')) {
         console.error(`Timeout deep scraping ${slug}. Skipping...`);
       } else {
-        console.error(`Error deep scraping ${slug}:`, e.message || e);
+        console.error(`Error deep scraping ${slug}:`, err.message || err);
       }
     }
   }

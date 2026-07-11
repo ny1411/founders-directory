@@ -12,6 +12,7 @@ export default function LoginPage() {
 
   const handleGoogleLogin = async () => {
     try {
+      if (!auth) throw new Error("Firebase auth not initialized");
       const result = await signInWithPopup(auth, googleProvider);
       
       // We can also create/update the User in Prisma here, but doing it in a Server Action or API might be better.
