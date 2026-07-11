@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Metadata } from "next"
 import { ArrowLeft, ExternalLink, Building2, MapPin, Users, Calendar, Banknote } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
+import { SendDmButton } from "@/components/send-dm-button"
 
 export async function generateMetadata(
   props: { params: Promise<{ slug: string }> }
@@ -21,7 +22,7 @@ export async function generateMetadata(
   }
 
   return {
-    title: `${company.name} | VC Portfolio Directory`,
+    title: `${company.name} | Company Name`,
     description: company.oneLiner || company.description || `View details about ${company.name}`,
   }
 }
@@ -162,21 +163,7 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
               </div>
             )}
             
-            {(company.stage || company.raised) && (
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
-                  <Banknote className="w-4 h-4 text-muted-foreground" />
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Funding</div>
-                  <div className="text-sm font-medium text-foreground">
-                    {company.stage && <span>{company.stage} </span>}
-                    {company.stage && company.raised && <span className="text-muted-foreground">• </span>}
-                    {company.raised && <span>{company.raised}</span>}
-                  </div>
-                </div>
-              </div>
-            )}
+
           </div>
           
           {company.tags && (
@@ -230,23 +217,31 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
                   </p>
                 )}
                 
-                <div className="pt-4 mt-auto flex items-center gap-2 border-t border-border/50">
-                  {founder.linkedinUrl && (
-                    <a href={founder.linkedinUrl} target="_blank" rel="noopener noreferrer" className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-full transition-colors flex items-center justify-center">
-                      <img src="https://thesvg.org/icons/linkedin/default.svg" alt="LinkedIn" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
-                      <span className="sr-only">LinkedIn</span>
-                    </a>
-                  )}
-                  {founder.twitterUrl && (
-                    <a href={founder.twitterUrl} target="_blank" rel="noopener noreferrer" className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-full transition-colors flex items-center justify-center">
-                      <img src="https://thesvg.org/icons/x/default.svg" alt="Twitter" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
-                      <span className="sr-only">Twitter</span>
-                    </a>
-                  )}
-                  {(!founder.linkedinUrl && !founder.twitterUrl) && (
-                    <span className="text-xs text-muted-foreground italic">No social links</span>
-                  )}
+                <div className="pt-4 mt-auto flex items-center justify-between gap-2 border-t border-border/50">
+                  <div className="flex items-center gap-2">
+                    {founder.linkedinUrl && (
+                      <a href={founder.linkedinUrl} target="_blank" rel="noopener noreferrer" className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-full transition-colors flex items-center justify-center">
+                        <img src="https://thesvg.org/icons/linkedin/default.svg" alt="LinkedIn" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
+                        <span className="sr-only">LinkedIn</span>
+                      </a>
+                    )}
+                    {founder.twitterUrl && (
+                      <a href={founder.twitterUrl} target="_blank" rel="noopener noreferrer" className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-full transition-colors flex items-center justify-center">
+                        <img src="https://thesvg.org/icons/x/default.svg" alt="Twitter" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
+                        <span className="sr-only">Twitter</span>
+                      </a>
+                    )}
+                    {(!founder.linkedinUrl && !founder.twitterUrl) && (
+                      <span className="text-xs text-muted-foreground italic">No social links</span>
+                    )}
+                  </div>
                 </div>
+                
+                <SendDmButton 
+                  founderId={founder.id} 
+                  founderName={founder.name} 
+                  companySlug={company.slug} 
+                />
               </div>
             ))}
           </div>
