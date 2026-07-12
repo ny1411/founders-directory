@@ -48,6 +48,8 @@ model Founder {
   linkedinUrl String?
   bio         String?
 
+  generatedMessages GeneratedMessage[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -58,6 +60,23 @@ model User {
   email      String   @unique
   resumeText String?
   
+  generatedMessages GeneratedMessage[]
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+model GeneratedMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  founderId String
+  content   String
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  founder   Founder  @relation(fields: [founderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, founderId])
 }
