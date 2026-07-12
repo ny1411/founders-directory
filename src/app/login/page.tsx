@@ -5,6 +5,7 @@ import { signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { buttonVariants } from '@/components/ui/button';
+import Image from 'next/image';
 
 export default function LoginPage() {
   const [error, setError] = useState('');
@@ -44,7 +45,7 @@ export default function LoginPage() {
           onClick={handleGoogleLogin} 
           className={buttonVariants({ variant: "default", className: "w-full flex items-center justify-center gap-2" })}
         >
-          <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-5 h-5" alt="Google" />
+          <Image src="https://www.svgrepo.com/show/475656/google-color.svg" width={20} height={20} className="w-5 h-5" alt="Google" />
           Sign in with Google
         </button>
       </div>

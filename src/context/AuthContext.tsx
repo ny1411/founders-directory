@@ -31,7 +31,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return () => unsubscribe();
     } catch (error) {
       console.error("Auth state change error:", error);
-      setLoading(false);
+      setTimeout(() => setLoading(false), 0);
     }
   }, []);
 
