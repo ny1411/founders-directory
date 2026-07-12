@@ -11,9 +11,11 @@ interface SendDmButtonProps {
   founderId: string;
   founderName: string;
   companySlug: string;
+  twitterUrl?: string | null;
+  linkedinUrl?: string | null;
 }
 
-export function SendDmButton({ founderId, founderName, companySlug }: SendDmButtonProps) {
+export function SendDmButton({ founderId, founderName, companySlug, twitterUrl, linkedinUrl }: SendDmButtonProps) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -60,6 +62,8 @@ export function SendDmButton({ founderId, founderName, companySlug }: SendDmButt
           founderId={founderId} 
           founderName={founderName} 
           companySlug={companySlug} 
+          twitterUrl={twitterUrl}
+          linkedinUrl={linkedinUrl}
           onClose={() => setIsModalOpen(false)} 
         />
       )}

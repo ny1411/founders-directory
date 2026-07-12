@@ -3,7 +3,7 @@ import { notFound } from "next/navigation"
 import Image from "next/image"
 import Link from "next/link"
 import { Metadata } from "next"
-import { ArrowLeft, ExternalLink, Building2, MapPin, Users, Calendar, Banknote } from "lucide-react"
+import { ArrowLeft, ExternalLink, Building2, MapPin, Users, Calendar } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import { SendDmButton } from "@/components/send-dm-button"
 
@@ -92,13 +92,13 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
             )}
             {company.twitterUrl && (
               <a href={company.twitterUrl} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline", size: "icon" })}>
-                <img src="https://thesvg.org/icons/x/default.svg" alt="Twitter" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
+                <Image src="https://thesvg.org/icons/x/default.svg" width={16} height={16} alt="Twitter" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
                 <span className="sr-only">Twitter</span>
               </a>
             )}
             {company.linkedinUrl && (
               <a href={company.linkedinUrl} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline", size: "icon" })}>
-                <img src="https://thesvg.org/icons/linkedin/default.svg" alt="LinkedIn" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
+                <Image src="https://thesvg.org/icons/linkedin/default.svg" width={16} height={16} alt="LinkedIn" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
                 <span className="sr-only">LinkedIn</span>
               </a>
             )}
@@ -221,13 +221,13 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
                   <div className="flex items-center gap-2">
                     {founder.linkedinUrl && (
                       <a href={founder.linkedinUrl} target="_blank" rel="noopener noreferrer" className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-full transition-colors flex items-center justify-center">
-                        <img src="https://thesvg.org/icons/linkedin/default.svg" alt="LinkedIn" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
+                        <Image src="https://thesvg.org/icons/linkedin/default.svg" width={16} height={16} alt="LinkedIn" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
                         <span className="sr-only">LinkedIn</span>
                       </a>
                     )}
                     {founder.twitterUrl && (
                       <a href={founder.twitterUrl} target="_blank" rel="noopener noreferrer" className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-full transition-colors flex items-center justify-center">
-                        <img src="https://thesvg.org/icons/x/default.svg" alt="Twitter" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
+                        <Image src="https://thesvg.org/icons/x/default.svg" width={16} height={16} alt="Twitter" className="w-4 h-4 grayscale opacity-70 hover:opacity-100 hover:grayscale-0 transition-all dark:invert dark:hover:invert-0" />
                         <span className="sr-only">Twitter</span>
                       </a>
                     )}
@@ -241,6 +241,8 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
                   founderId={founder.id} 
                   founderName={founder.name} 
                   companySlug={company.slug} 
+                  twitterUrl={founder.twitterUrl}
+                  linkedinUrl={founder.linkedinUrl}
                 />
               </div>
             ))}

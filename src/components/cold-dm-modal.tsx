@@ -9,10 +9,12 @@ interface ColdDmModalProps {
   founderId: string;
   founderName: string;
   companySlug: string;
+  twitterUrl?: string | null;
+  linkedinUrl?: string | null;
   onClose: () => void;
 }
 
-export function ColdDmModal({ founderId, founderName, companySlug, onClose }: ColdDmModalProps) {
+export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, linkedinUrl, onClose }: ColdDmModalProps) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -58,11 +60,13 @@ export function ColdDmModal({ founderId, founderName, companySlug, onClose }: Co
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleSend = () => {
+  const handleSend = (url?: string | null) => {
     handleCopy();
-    // In a real app we'd get the actual LinkedIn URL from the founder object
-    // For now we just prompt the user
-    alert('Copied to clipboard! Please paste this in your LinkedIn or Twitter message to the founder.');
+    if (url) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } else {
+      alert('Copied to clipboard! Please paste this in your message to the founder.');
+    }
   };
 
   return (
@@ -112,13 +116,33 @@ export function ColdDmModal({ founderId, founderName, companySlug, onClose }: Co
               <Copy className="w-4 h-4" />
               {copied ? 'Copied!' : 'Copy Text'}
             </button>
-            <button 
-              onClick={handleSend} 
-              className={buttonVariants({ variant: "default", className: "gap-2" })}
-            >
-              Send to Founder
-              <ExternalLink className="w-4 h-4" />
-            </button>
+            {twitterUrl && (
+              <button 
+                onClick={() => handleSend(twitterUrl)} 
+                className={buttonVariants({ variant: "default", className: "gap-2 bg-black hover:bg-black/80 text-black" })}
+              >
+                Send via X
+                <ExternalLink className="w-4 h-4" />
+              </button>
+            )}
+            {linkedinUrl && (
+              <button 
+                onClick={() => handleSend(linkedinUrl)} 
+                className={buttonVariants({ variant: "default", className: "gap-2 bg-[#0077b5] hover:bg-[#0077b5]/80 text-black" })}
+              >
+                Send via LinkedIn
+                <ExternalLink className="w-4 h-4" />
+              </button>
+            )}
+            {!twitterUrl && !linkedinUrl && (
+              <button 
+                onClick={() => handleSend()} 
+                className={buttonVariants({ variant: "default", className: "gap-2" })}
+              >
+                Send to Founder
+                <ExternalLink className="w-4 h-4" />
+              </button>
+            )}
           </div>
         )}
       </div>
