@@ -135,13 +135,9 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
               </button>
             )}
             {!twitterUrl && !linkedinUrl && (
-              <button 
-                onClick={() => handleSend()} 
-                className={buttonVariants({ variant: "default", className: "gap-2" })}
-              >
-                Send to Founder
-                <ExternalLink className="w-4 h-4" />
-              </button>
+              <span className="text-sm text-muted-foreground italic px-2">
+                Social links not available
+              </span>
             )}
           </div>
         )}
