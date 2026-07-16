@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { buttonVariants } from "@/components/ui/button"
 import { Search } from "lucide-react"
-
+import { SubmitCompanyButton } from "@/components/submit-company-button"
 export default async function Home(props: {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
@@ -112,9 +112,7 @@ export default async function Home(props: {
             <span className="text-3xl font-serif text-foreground">{totalCount}</span>
             <span className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Companies</span>
           </div>
-          <Link href="/company/new" className={buttonVariants({ variant: "default", className: "ml-auto" })}>
-            + Submit Company
-          </Link>
+          <SubmitCompanyButton />
         </div>
       </section>
 

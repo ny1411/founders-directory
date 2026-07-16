@@ -1,6 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/context/AuthContext'
 import { createCompany } from '@/app/actions'
 import Link from 'next/link'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -9,6 +11,18 @@ import { Input } from '@/components/ui/input'
 
 export default function NewCompanyPage() {
   const [founderCount, setFounderCount] = useState(1)
+  const { user, loading } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/login')
+    }
+  }, [user, loading, router])
+
+  if (loading || !user) {
+    return <div className="max-w-4xl mx-auto py-20 flex justify-center"><div className="w-8 h-8 rounded-full border-4 border-primary border-t-transparent animate-spin" /></div>
+  }
 
   return (
     <div className="max-w-4xl mx-auto flex flex-col gap-8 pb-20">
