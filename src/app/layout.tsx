@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Instrument_Serif, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import Image from "next/image";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -53,6 +54,7 @@ export default function RootLayout({
               <div className="container max-w-5xl flex h-16 items-center mx-auto px-4">
                 <div className="mr-4 flex">
                   <Link className="mr-6 flex items-center space-x-2" href="/">
+                    <Image src="/icon.png" width={48} height={48} alt="Founders Directory Logo" className="rounded-md" />
                     <span className="font-serif text-2xl tracking-tight sm:inline-block">
                       Founders Directory
                     </span>
