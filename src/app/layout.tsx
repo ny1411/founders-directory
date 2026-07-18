@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { SmoothScrolling } from "@/components/smooth-scrolling";
 import { AuthProvider } from "@/context/AuthContext";
 import { HeaderAuth } from "@/components/header-auth";
+import { Analytics } from "@vercel/analytics/next";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -72,6 +73,7 @@ export default function RootLayout({
           </SmoothScrolling>
           </AuthProvider>
         </ThemeProvider>
+        <Analytics />
       </body>
     </html>
   );
