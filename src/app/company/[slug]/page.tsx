@@ -174,7 +174,7 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
           
           {company.tags && (
             <div className="pt-4 border-t border-border flex flex-wrap gap-2">
-              {company.tags.split(',').map((tag: string, idx: number) => (
+              {Array.isArray(company.tags) && company.tags.map((tag: string, idx: number) => (
                 <span key={idx} className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground bg-secondary/50 px-2 py-1 rounded-md">
                   {tag.trim()}
                 </span>

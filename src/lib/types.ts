@@ -13,7 +13,7 @@ export interface Company {
   website: string | null;
   twitterUrl: string | null;
   linkedinUrl: string | null;
-  tags: string | null;
+  tags: string[] | null;
   batch: string | null;
   ycUrl: string | null;
   createdAt: string; // Stored as ISO string
