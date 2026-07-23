@@ -1,6 +1,6 @@
 import { adminDb } from "@/lib/firebase-admin"
 import { Company } from "@/lib/types"
-import { FieldPath, type Query, type QueryDocumentSnapshot } from "firebase-admin/firestore"
+import { FieldPath, type Query } from "firebase-admin/firestore"
 import Link from "next/link"
 import Image from "next/image"
 import { Card } from "@/components/ui/card"
@@ -30,8 +30,8 @@ export default async function Home(props: {
   let companiesQuery: Query = adminDb.collection("companies");
 
   if (q) {
-    // Note: Firestore only supports prefix search for text fields.
-    companiesQuery = companiesQuery.where('name', '>=', q).where('name', '<=', q + '\uf8ff');
+    const searchQ = q.trim().toLowerCase();
+    companiesQuery = companiesQuery.where('slug', '>=', searchQ).where('slug', '<=', searchQ + '\uf8ff');
   }
   if (vc !== "all") {
     companiesQuery = companiesQuery.where("vcBacker", "==", vc);
@@ -70,11 +70,11 @@ export default async function Home(props: {
   if (employees !== "all") {
     companiesQuery = companiesQuery
       .orderBy("employees", sortDirection)
-      .orderBy("name", sortDirection)
+      .orderBy("slug", sortDirection)
       .orderBy(FieldPath.documentId(), sortDirection);
   } else {
     companiesQuery = companiesQuery
-      .orderBy("name", sortDirection)
+      .orderBy("slug", sortDirection)
       .orderBy(FieldPath.documentId(), sortDirection);
   }
 
@@ -101,10 +101,10 @@ export default async function Home(props: {
   })) as Company[];
 
   const firstItemCursor = snapshot.docs.length > 0 
-    ? JSON.stringify([ snapshot.docs[0].get("employees"), snapshot.docs[0].get("name"), snapshot.docs[0].id])
+    ? JSON.stringify([ snapshot.docs[0].get("employees"), snapshot.docs[0].get("slug"), snapshot.docs[0].id])
     : null;
   const lastItemCursor = snapshot.docs.length > 0 
-    ? JSON.stringify([snapshot.docs[snapshot.docs.length - 1].get("employees"), snapshot.docs[snapshot.docs.length - 1].get("name"), snapshot.docs[snapshot.docs.length - 1].id])
+    ? JSON.stringify([snapshot.docs[snapshot.docs.length - 1].get("employees"), snapshot.docs[snapshot.docs.length - 1].get("slug"), snapshot.docs[snapshot.docs.length - 1].id])
     : null;
 
   // Dummy filter arrays (In real app, you might group by from DB)
@@ -291,7 +291,7 @@ export default async function Home(props: {
                       </span>
                     )}
 
-                    {company.tags && company.tags.split(',').map((tag: string, idx: number) => (
+                    {company.tags && Array.isArray(company.tags) && company.tags.map((tag: string, idx: number) => (
                       <span key={idx} className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground bg-secondary/50 px-2 py-1 rounded-md">
                         {tag.trim()}
                       </span>
