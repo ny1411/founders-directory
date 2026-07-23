@@ -57,13 +57,14 @@
   - [x] Render all details like social links, cap table, and founder bios.
   - [x] Use Next.js capabilities for fast load.
 
-## Phase 6: Polish & Performance
-- **Goal:** Finalize the developer-centric, premium experience.
+## Phase 6: Polish, Performance & Optimisation
+- **Goal:** Finalize the developer-centric, premium experience and optimize.
 - **Tasks:**
   - [x] Add dark mode toggle (default to dark).
   - [x] Add lenis for smooth scrolling.
   - [x] Add loading skeletons for the grid and detail pages.
   - [x] Generate standard SEO metadata dynamically.
+  - [x] Implement true Firestore server-side pagination to reduce memory usage and reads.
 
 ## Phase 7: Cold DM Generator Feature
 - **Goal:** Implement a feature to generate a custom cold DM based on user's resume and company/founder's description.

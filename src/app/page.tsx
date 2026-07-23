@@ -1,5 +1,6 @@
 import { adminDb } from "@/lib/firebase-admin"
 import { Company } from "@/lib/types"
+import type { Query, QueryDocumentSnapshot } from "firebase-admin/firestore"
 import Link from "next/link"
 import Image from "next/image"
 import { Card } from "@/components/ui/card"
@@ -21,41 +22,35 @@ export default async function Home(props: {
   const stage = (searchParams?.stage as string) || "all"
   const raised = (searchParams?.raised as string) || "all"
 
-  const snapshot = await adminDb.collection('companies').get();
-  let allCompanies = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Company));
+  let companiesQuery: Query = adminDb.collection('companies');
 
   if (q) {
-    const lowerQ = q.toLowerCase();
-    allCompanies = allCompanies.filter(c => 
-      c.name.toLowerCase().includes(lowerQ) || 
-      (c.description && c.description.toLowerCase().includes(lowerQ))
-    );
+    // Note: Firestore only supports prefix search for text fields.
+    companiesQuery = companiesQuery.where('name', '>=', q).where('name', '<=', q + '\uf8ff');
   }
   if (vc !== "all") {
-    allCompanies = allCompanies.filter(c => c.vcBacker === vc);
+    companiesQuery = companiesQuery.where("vcBacker", "==", vc);
   }
   if (industry !== "all") {
-    allCompanies = allCompanies.filter(c => 
-      c.industry === industry || 
-      (c.tags && c.tags.includes(industry))
-    );
+    companiesQuery = companiesQuery.where("industry", "==", industry);
   }
   if (employees !== "all") {
-    allCompanies = allCompanies.filter(c => c.employees === employees);
+    companiesQuery = companiesQuery.where("employees", "==", employees);
   }
 
   // Sort
-  allCompanies.sort((a, b) => {
-    if (sort === "asc") return a.name.localeCompare(b.name);
-    return b.name.localeCompare(a.name);
-  });
+  companiesQuery = companiesQuery.orderBy('name', sort === 'asc' ? 'asc' : 'desc');
 
-  const take = 10
-  const totalCount = allCompanies.length;
-  const totalPages = Math.ceil(totalCount / take)
-  const skip = (page - 1) * take
+  const take = 10;
   
-  const companies = allCompanies.slice(skip, skip + take)
+  // Get total count for pagination
+  const countSnapshot = await companiesQuery.count().get();
+  const totalCount = countSnapshot.data().count;
+  const totalPages = Math.ceil(totalCount / take);
+  const skip = (page - 1) * take;
+
+  const snapshot = await companiesQuery.offset(skip).limit(take).get();
+  const companies: Company[] = snapshot.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() } as Company));
 
   // Dummy filter arrays (In real app, you might group by from DB)
   const vcs = ["YCombinator"]
@@ -214,7 +209,7 @@ export default async function Home(props: {
 
           {/* Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {companies.map(company => (
+            {companies.map((company: Company) => (
               <Link key={company.id} href={`/company/${company.slug}`} className="block h-full group">
                 <Card className="h-full bg-card border border-border rounded-2xl p-6 flex flex-col gap-4 transition-all duration-200 hover:bg-accent/50 hover:border-foreground/20 shadow-none">
                   <div className="flex justify-between items-start gap-4">
@@ -256,7 +251,7 @@ export default async function Home(props: {
                       </span>
                     )}
 
-                    {company.tags && company.tags.split(',').map((tag, idx) => (
+                    {company.tags && company.tags.split(',').map((tag: string, idx: number) => (
                       <span key={idx} className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground bg-secondary/50 px-2 py-1 rounded-md">
                         {tag.trim()}
                       </span>
