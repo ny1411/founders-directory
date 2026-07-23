@@ -9,6 +9,8 @@ import { buttonVariants } from "@/components/ui/button"
 import { Search } from "lucide-react"
 import { SubmitCompanyButton } from "@/components/submit-company-button"
 import { KeyboardShortcuts } from "@/components/keyboard-shortcuts"
+import { BatchSelect } from "@/components/batch-select"
+import { Suspense } from "react"
 
 export default async function Home(props: {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>
@@ -21,6 +23,7 @@ export default async function Home(props: {
   const pageParam = searchParams?.page as string
   const page = pageParam ? parseInt(pageParam, 10) : 1
   const employees = (searchParams?.employees as string) || "all"
+  const batch = (searchParams?.batch as string) || "all"
   const cursor = (searchParams?.cursor as string);
   const direction = (searchParams?.direction as string) || "next";
 
@@ -48,6 +51,9 @@ export default async function Home(props: {
     } else if (employees === "501+") {
       companiesQuery = companiesQuery.where("employees", ">=", 501);
     }
+  }
+  if (batch !== "all") {
+    companiesQuery = companiesQuery.where("batch", "==", batch);
   }
 
   // Sort
@@ -125,6 +131,7 @@ export default async function Home(props: {
     if (industry !== "all") params.set("industry", industry)
     if (sort !== "asc") params.set("sort", sort)
     if (employees !== "all") params.set("employees", employees)
+    if (batch !== "all") params.set("batch", batch)
     if (page > 1) params.set("page", page.toString())
 
     Object.entries(overrides).forEach(([key, value]) => {
@@ -163,6 +170,13 @@ export default async function Home(props: {
         
         {/* Sidebar Filters */}
         <aside className="w-full md:w-56 flex flex-col gap-10 shrink-0">
+          <div>
+            <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-4">Batch</h3>
+            <Suspense fallback={<div className="relative h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 shadow-sm" />}>
+              <BatchSelect />
+            </Suspense>
+          </div>
+
           <div>
             <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-4">VC Backer</h3>
             <div className="flex flex-col gap-2.5">
@@ -222,6 +236,7 @@ export default async function Home(props: {
               {industry !== "all" && <input type="hidden" name="industry" value={industry} />}
               {sort !== "asc" && <input type="hidden" name="sort" value={sort} />}
               {employees !== "all" && <input type="hidden" name="employees" value={employees} />}
+              {batch !== "all" && <input type="hidden" name="batch" value={batch} />}
             </form>
 
             <div className="flex items-center gap-3 shrink-0">

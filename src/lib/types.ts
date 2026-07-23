@@ -14,6 +14,7 @@ export interface Company {
   twitterUrl: string | null;
   linkedinUrl: string | null;
   tags: string | null;
+  batch: string | null;
   ycUrl: string | null;
   createdAt: string; // Stored as ISO string
   updatedAt: string; // Stored as ISO string
