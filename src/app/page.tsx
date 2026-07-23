@@ -37,7 +37,17 @@ export default async function Home(props: {
     companiesQuery = companiesQuery.where("industry", "==", industry);
   }
   if (employees !== "all") {
-    companiesQuery = companiesQuery.where("employees", "==", employees);
+    if (employees === "1-10") {
+      companiesQuery = companiesQuery.where("employees", ">=", 1).where("employees", "<=", 10);
+    } else if (employees === "11-50") {
+      companiesQuery = companiesQuery.where("employees", ">=", 11).where("employees", "<=", 50);
+    } else if (employees === "51-200") {
+      companiesQuery = companiesQuery.where("employees", ">=", 51).where("employees", "<=", 200);
+    } else if (employees === "201-500") {
+      companiesQuery = companiesQuery.where("employees", ">=", 201).where("employees", "<=", 500);
+    } else if (employees === "501+") {
+      companiesQuery = companiesQuery.where("employees", ">=", 501);
+    }
   }
 
   // Sort
@@ -51,9 +61,16 @@ export default async function Home(props: {
   const totalPages = Math.ceil(totalCount / take);
 
   // Apply sorting AFTER count
-  companiesQuery = companiesQuery
-    .orderBy('name', sortDirection)
-    .orderBy(FieldPath.documentId(), sortDirection);
+  if (employees !== "all") {
+    companiesQuery = companiesQuery
+      .orderBy("employees", sortDirection)
+      .orderBy("name", sortDirection)
+      .orderBy(FieldPath.documentId(), sortDirection);
+  } else {
+    companiesQuery = companiesQuery
+      .orderBy("name", sortDirection)
+      .orderBy(FieldPath.documentId(), sortDirection);
+  }
 
   if (cursor) {
     try {
@@ -78,10 +95,10 @@ export default async function Home(props: {
   })) as Company[];
 
   const firstItemCursor = snapshot.docs.length > 0 
-    ? JSON.stringify([snapshot.docs[0].get("name"), snapshot.docs[0].id])
+    ? JSON.stringify([ snapshot.docs[0].get("employees"), snapshot.docs[0].get("name"), snapshot.docs[0].id])
     : null;
   const lastItemCursor = snapshot.docs.length > 0 
-    ? JSON.stringify([snapshot.docs[snapshot.docs.length - 1].get("name"), snapshot.docs[snapshot.docs.length - 1].id])
+    ? JSON.stringify([snapshot.docs[snapshot.docs.length - 1].get("employees"), snapshot.docs[snapshot.docs.length - 1].get("name"), snapshot.docs[snapshot.docs.length - 1].id])
     : null;
 
   // Dummy filter arrays (In real app, you might group by from DB)

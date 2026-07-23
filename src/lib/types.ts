@@ -7,7 +7,7 @@ export interface Company {
   logoUrl: string | null;
   vcBacker: string | null;
   industry: string | null;
-  employees: string | null;
+  employees: number | null;
   location: string | null;
   foundedYear: number | null;
   website: string | null;

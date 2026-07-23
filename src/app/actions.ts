@@ -12,7 +12,8 @@ export async function createCompany(formData: FormData) {
   const logoUrl = formData.get('logoUrl') as string
   const vcBacker = formData.get('vcBacker') as string
   const industry = formData.get('industry') as string
-  const employees = formData.get('employees') as string
+  const employeesStr = formData.get('employees') as string
+  const employees = employeesStr ? Number(employeesStr) : null
   const location = formData.get('location') as string
   const foundedYear = formData.get('foundedYear') ? parseInt(formData.get('foundedYear') as string) : null
   const twitterUrl = formData.get('twitterUrl') as string
