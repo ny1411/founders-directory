@@ -1,5 +1,16 @@
 # Project Plan: Founders Directory
 
+**Description:**
+Founders Directory is a platform designed to help you search for YC startups and discover the exact founders you need to connect with. You can access founders' social data, link your resume to build a tailored profile, and automatically generate personalized cold DMs leveraging both your background and the founder's details to send directly to them.
+
+**Key Features:**
+- search for YC startups  
+- founder search to match with exact founders you need
+- get access to founder's socials data 
+- link your resume to generate a profile
+- generate a personalized cold DM using your & founder details
+- send directly to the founder 
+
 ## 1. Architecture & Tech Stack
 - **Framework:** Next.js (App Router)
 - **Styling:** Tailwind CSS v4 + shadcn/ui
@@ -54,7 +65,7 @@
 - **Tasks:**
   - [x] Create `src/app/company/[slug]/page.tsx`.
   - [x] Query Company and its related Founder records by slug.
-  - [x] Render all details like social links, cap table, and founder bios.
+  - [x] Render all details and get access to founder's socials data (LinkedIn, X), cap table, and founder bios.
   - [x] Use Next.js capabilities for fast load.
 
 ## Phase 6: Polish, Performance & Optimisation
@@ -75,7 +86,7 @@
     - [x] Create login flow and auth context.
   - **2. Database & User Profile:**
     - [x] Update Firestore rules and schema to include a `Users` collection.
-    - [x] Create `/profile` page with a resume upload feature.
+    - [x] Create `/profile` page with a resume upload feature (link your resume to generate a profile).
     - [x] Extract resume text (using an API or pdf-parse) and store it in Firestore.
     - [x] Provide UI in `/profile` for users to verify the extracted text and hit save.
   - **3. UI Updates (Company Page):**
@@ -84,9 +95,9 @@
     - [x] **Access Guards:** Redirect to login or profile if not properly configured.
   - **4. Gemini API Integration:**
     - [x] Set up an API route (e.g., `src/app/api/generate-dm/route.ts` or server action) to handle Gemini API requests securely on the server.
-    - [x] Construct a detailed prompt combining: User's resume data + Company description + Selected Founder's details.
+    - [x] Construct a detailed prompt combining: User's resume data + Company description + Selected Founder's details to generate a personalized cold DM.
   - **5. Final User Flow (The Modal/Dialog):**
     - [x] Show a loading state while the Gemini API is generating the cold email.
     - [x] Display the generated response in an editable text area.
     - [x] Add a **"Copy Text"** button (copies to clipboard).
-    - [x] Add a **"Send to Founder"** button (copies text and prompts user to open the founder's X/LinkedIn profile).
+    - [x] Add a **"Send to Founder"** button (send directly to the founder by copying text and opening their X/LinkedIn profile).
