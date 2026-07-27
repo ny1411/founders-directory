@@ -1,23 +1,34 @@
 # Founders Directory
 
-A premium, developer-focused directory of companies backed by top venture capital firms. Built with modern web technologies, it features real-time data scraping, authentication, and an AI-powered custom cold DM generator.
+Founders Directory is a premium, developer-focused platform designed to help you search for YCombinator startups and discover the exact founders you need to connect with. Built with a "less is more" philosophy, you can access founders' social data, link your resume to build a tailored profile, and automatically generate personalized cold DMs leveraging both your background and the founder's details to send directly to them.
 
-## Features
+## Key Features
 
-- **Company Directory:** Browse and filter companies by industry, employee count, and more.
-- **Premium UI:** Designed with a minimalistic, "less is more" philosophy using Tailwind CSS, shadcn/ui, and custom fonts (Inter, Instrument Serif, Geist Mono).
-- **Smooth UX:** Includes dark mode by default, Lenis smooth scrolling, and seamless transitions.
-- **AI Cold DM Generator:** Connects to the Gemini API to analyze user resumes and founder profiles, generating personalized cold outreach messages.
-- **Automated Data:** Uses Playwright and Cheerio to scrape and update company data from sources like YCombinator.
+- **YC Startup Search**: Search for YCombinator startups by name or description. Filter results by VC Backer, Industry, Employees, Seed Rounds, and Raised amount.
+- **Precision Founder Search**: Find and match with the exact founders you need based on their role or background.
+- **Comprehensive Social Data**: Get direct access to founders' social data (LinkedIn, X), cap tables, and detailed bios right from the company pages.
+- **Tailored User Profiles**: Create a profile and link/upload your resume to parse your professional background and experience.
+- **AI-Powered Cold DMs**: Generate highly personalized cold outreach messages utilizing the Gemini API. The AI seamlessly combines your resume data, the company's description, and the selected founder's details to craft the perfect pitch.
+- **Direct Outreach**: Easily copy the generated message and send it directly to the founder via their social profiles (X/LinkedIn) with a single click.
+- **Premium UI/UX**: Designed to feel like a premium developer tool (inspired by Linear, Vercel, Raycast). Features a minimalist, typography-driven UI using Tailwind CSS v4, shadcn/ui, dark mode by default, and Lenis smooth scrolling.
+- **Automated Data Pipeline**: Built-in Playwright and Cheerio scripts (`scripts/scraper/`) scrape and update company and founder data continuously into Firestore.
 
 ## Tech Stack
 
 - **Framework:** [Next.js 15](https://nextjs.org) (App Router, Server Components)
 - **Styling:** [Tailwind CSS v4](https://tailwindcss.com/) & [shadcn/ui](https://ui.shadcn.com/)
-- **Database & Auth:** [Firebase](https://firebase.google.com/) (Client & Admin SDKs)
+- **Database & Auth:** [Firebase](https://firebase.google.com/) (Firestore & Firebase Authentication)
 - **AI Integration:** [@google/genai](https://github.com/google/generative-ai-js) (Gemini API)
 - **Scraping:** [Playwright](https://playwright.dev/) & [Cheerio](https://cheerio.js.org/)
 - **Analytics:** [Vercel Analytics](https://vercel.com/analytics)
+
+## Architecture
+
+- `src/app/`: Next.js App Router pages (Home, Company Details, Profile) and API routes.
+- `src/components/`: Reusable UI components including layout components, Company Cards, and Filter Sidebars.
+- `src/context/`: React context providers (e.g., AuthContext).
+- `src/lib/`: Firebase configuration, database utilities, and TypeScript types.
+- `scripts/scraper/`: Web scraping scripts (e.g., `yc.ts`) for data population.
 
 ## Getting Started
 
@@ -33,7 +44,10 @@ npm install
 ```
 
 2. Set up environment variables:
-Create a `.env` or `.env.local` file in the root directory and add the required Firebase, Next.js, and Gemini API keys.
+Create a `.env` or `.env.local` file in the root directory and add your keys:
+- Firebase configuration (Client & Admin SDKs)
+- Next.js secrets
+- Gemini API key
 
 3. Run the development server:
 ```bash
@@ -42,22 +56,14 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-## Architecture
-
-- `src/app/`: Next.js App Router pages and API routes.
-- `src/components/`: Reusable UI components (shadcn/ui, layout components).
-- `src/context/`: React context providers (e.g., AuthContext).
-- `src/lib/`: Firebase configuration, utilities, and TypeScript types.
-- `scripts/scraper/`: Web scraping scripts (e.g., `yc.ts`) for data population.
-
 ## Design Philosophy
 
-The interface is built to feel like a premium developer tool (inspired by Linear, Vercel, Raycast). It focuses on:
-- Minimalist UI with purposeful elements.
-- Typography-driven hierarchy over excessive decoration.
+The interface focuses on a calm, understated, and information-first aesthetic:
+- Minimalist UI with purposeful elements (no unnecessary shadows, borders, or colors).
+- Typography-driven hierarchy over excessive decoration (utilizing fonts like Inter, Instrument Serif, and Geist Mono).
 - Consistent, generous spacing and muted color palettes.
-See `design.md` for full design guidelines.
+- See `design.md` for full design guidelines.
 
 ## Deployment
 
-The easiest way to deploy this Next.js app is to use the [Vercel Platform](https://vercel.com/). Ensure all environment variables are configured in your Vercel project settings.
+The easiest way to deploy this Next.js app is to use the [Vercel Platform](https://vercel.com/). Ensure all environment variables (Firebase, Gemini API) are configured in your Vercel project settings.
