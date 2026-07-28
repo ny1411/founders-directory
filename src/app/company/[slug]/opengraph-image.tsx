@@ -1,6 +1,8 @@
 import { ImageResponse } from 'next/og'
 import { adminDb } from "@/lib/firebase-admin"
 import { Company } from "@/lib/types"
+import { readFileSync } from 'fs'
+import { join } from 'path'
 
 export const alt = 'Company Profile on Founders Directory'
 export const size = { width: 1200, height: 630 }
@@ -22,11 +24,14 @@ export default async function Image(props: { params: Promise<{ slug: string }> }
 
   const company = companySnapshot.docs[0].data() as Company;
 
+  const bgImage = readFileSync(join(process.cwd(), 'public/images/og/og-bg.jpg'));
+  const bgImageDataUrl = `data:image/jpeg;base64,${bgImage.toString('base64')}`;
+
   return new ImageResponse(
     (
       <div
         style={{
-          backgroundImage: `url(${new URL('../../../../public/images/og/og-bg.jpg', import.meta.url).toString()})`,
+          backgroundImage: `url(${bgImageDataUrl})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           backgroundRepeat: 'no-repeat',
