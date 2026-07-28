@@ -1,0 +1,21 @@
+# Founders Directory
+
+Founders Directory is a premium, developer-focused platform designed to help users search for YCombinator startups and discover founders. 
+It provides startup data, founder social links, and AI-powered personalized cold DMs.
+
+## Purpose
+This website allows founders, investors, and developers to explore startups backed by top VCs and connect with their teams.
+
+## Available Content
+- / : Homepage with searchable startup directory
+- /company/[slug] : Detailed information about specific companies and their founders
+- /profile : User profiles (requires authentication)
+
+## Documentation and Code
+Built with Next.js App Router, Tailwind CSS v4, and Firebase.
+
+## Crawling
+Crawlers are welcome to index public directories (homepage and company pages). Please respect the robots.txt file.
+
+Sitemap: https://foundersdirectory.com/sitemap.xml
+Robots: https://foundersdirectory.com/robots.txt
