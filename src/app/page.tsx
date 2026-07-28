@@ -145,9 +145,37 @@ export default async function Home(props: {
     return `/?${params.toString()}`
   }
 
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://foundersdirectory.com/#website",
+        "url": "https://foundersdirectory.com/",
+        "name": "Founders Directory",
+        "description": "Discover YC startups and VC-backed founders.",
+        "potentialAction": {
+          "@type": "SearchAction",
+          "target": {
+            "@type": "EntryPoint",
+            "urlTemplate": "https://foundersdirectory.com/?q={search_term_string}"
+          },
+          "query-input": "required name=search_term_string"
+        }
+      },
+      {
+        "@type": "CollectionPage",
+        "@id": "https://foundersdirectory.com/#webpage",
+        "url": "https://foundersdirectory.com/",
+        "name": "Founders Directory - Startup Collection",
+        "isPartOf": { "@id": "https://foundersdirectory.com/#website" }
+      }
+    ]
+  };
+
   return (
     <div className="flex flex-col gap-16 pb-16">
-      
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       {/* Hero Section */}
       <section className="flex flex-col gap-6 max-w-3xl pt-10">
         <h1 className="font-serif text-5xl md:text-7xl leading-tight text-foreground tracking-tight">

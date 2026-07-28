@@ -23,8 +23,28 @@ export async function generateMetadata(
   const company = companySnapshot.docs[0].data() as Company;
 
   return {
-    title: `${company.name} | Company Name`,
+    title: company.name,
     description: company.oneLiner || company.description || `View details about ${company.name}`,
+    openGraph: {
+      title: `${company.name} | Founders Directory`,
+      description: company.oneLiner || company.description || `View details about ${company.name}`,
+      url: `/company/${params.slug}`,
+      siteName: "Founders Directory",
+      images: [
+        {
+          url: company.logoUrl || '/icon.png',
+          width: 800,
+          height: 600,
+        }
+      ],
+      type: "website",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: company.name,
+      description: company.oneLiner || company.description || `View details about ${company.name}`,
+      images: [company.logoUrl || '/icon.png'],
+    },
   }
 }
 
@@ -44,8 +64,53 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
 
   const company = { ...companyData, founders };
 
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        name: company.name,
+        url: `https://foundersdirectory.com/company/${company.slug}`,
+        logo: company.logoUrl,
+        description: company.oneLiner || company.description,
+        sameAs: [
+          company.website,
+          company.twitterUrl,
+          company.linkedinUrl,
+        ].filter(Boolean),
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": "https://foundersdirectory.com/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "Companies",
+            "item": "https://foundersdirectory.com/"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": company.name,
+            "item": `https://foundersdirectory.com/company/${company.slug}`
+          }
+        ]
+      }
+    ]
+  };
+
   return (
     <div className="flex flex-col gap-16 pb-16">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       {/* Back Button */}
       <div>
         <Link href="/" className="inline-flex items-center text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
