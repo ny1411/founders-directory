@@ -179,10 +179,10 @@ export default async function Home(props: {
       {/* Hero Section */}
       <section className="flex flex-col gap-6 max-w-3xl pt-10">
         <h1 className="font-serif text-5xl md:text-7xl leading-tight text-foreground tracking-tight">
-          Discover the next generation of startups.
+          Find the Right YC Founders. Reach Out Better.
         </h1>
         <p className="text-xl text-secondary-foreground leading-relaxed font-light">
-          A curated directory of high-growth companies backed by the world&apos;s most prestigious venture capital firms.
+          Search 900+ YC startups, find the right founders, and send personalized cold DMs in minutes.
         </p>
         <div className="flex items-center gap-4 mt-4">
           <div className="flex flex-col">
