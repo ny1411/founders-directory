@@ -1,13 +1,16 @@
-import { scrapeYC } from './yc';
+import { parseOptions, scrapeYC } from './yc';
 
 async function main() {
   console.log("Starting full portfolio scrape...");
   
-  try { await scrapeYC(); } catch (e) { console.error("YC scrape failed", e); }
+  await scrapeYC(parseOptions(process.argv.slice(2)));
   
   console.log("Finished all scrapes!");
 }
 
 if (require.main === module) {
-  main().catch(console.error);
+  main().catch(error => {
+    console.error("YC scrape failed", error);
+    process.exitCode = 1;
+  });
 }

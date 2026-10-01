@@ -56,6 +56,47 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## YC Scraper
+
+With Firebase Admin credentials in `.env` and Playwright Chromium installed
+(`npx playwright install chromium`), run:
+
+```bash
+npm run scrape:yc
+```
+
+Each run targets **1,000 newly saved, unique companies**, skipping slugs already
+in Firestore. The scraper discovers the full directory using YC batch filters:
+the unfiltered search only exposes its first 1,000 results, so scrolling alone
+cannot reach the full directory. Discovery verifies every batch and the total
+before writing. Company profiles supply public company and founder data.
+
+```bash
+npm run scrape:yc -- --dry-run       # Discover and compare with Firebase; no writes
+npm run scrape:yc -- --limit 25      # Optional smaller run
+npm run test:scraper
+```
+
+In Windows PowerShell, use `npm.cmd` when passing flags so the npm PowerShell
+wrapper forwards them correctly:
+
+```powershell
+npm.cmd run scrape:yc -- --dry-run
+npm.cmd run scrape:yc -- --limit 25
+```
+
+Three bounded workers process profiles; only confirmed new saves count toward
+the target, and parallel workers cannot overshoot it. Transient requests and
+database operations are retried. Company and founder
+documents are saved together in a transaction with stable IDs, so reruns resume
+from the data already saved. Existing records with random IDs are also skipped.
+The summary reports discovered, existing, saved, and failed companies. Failed
+profiles remain eligible on the next run. Database failures or an unmet target
+caused by failed profiles produce a nonzero exit status. When fewer than 1,000
+new companies remain, the final run saves the remainder and reports exhaustion.
+Repeat the default command to work through the directory; the total changes as
+YC adds companies, and inaccessible profiles may require later retries.
+
 ## Design Philosophy
 
 The interface focuses on a calm, understated, and information-first aesthetic:

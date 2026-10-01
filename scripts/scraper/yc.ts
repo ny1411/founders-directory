@@ -1,224 +1,78 @@
 import 'dotenv/config';
-import { chromium } from 'playwright';
+import { randomUUID } from 'node:crypto';
+import { request } from 'playwright';
 import { adminDb } from '../../src/lib/firebase-admin';
+import { discoverCompanies } from './yc-directory';
+import { scrapeCompany } from './yc-company';
+import { errorMessage, retry, runCompanies } from './yc-runner';
+import { retryableDatabaseError, saveCompany } from './yc-store';
 
-export async function scrapeYC() {
-  console.log("Starting YCombinator deep scrape...");
-  let browser = await chromium.launch({ headless: true });
-  let page = await browser.newPage();
-  
-  await page.goto('https://www.ycombinator.com/companies', { waitUntil: 'networkidle' });
-  
-  // Scroll down to load more companies (infinite scroll)
-  console.log("Scrolling to load more companies...");
-  for (let i = 0; i < 10; i++) {
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(1000); // Wait for the next batch to load
-  }
-  
-  // Extract list of company slugs
-  const companySlugs = await page.evaluate(() => {
-    const results: string[] = [];
-    const cards = document.querySelectorAll('a[href^="/companies/"]');
-    cards.forEach(card => {
-      const href = card.getAttribute('href');
-      const slug = href?.replace('/companies/', '').split('?')[0].split('#')[0];
-      if (slug && slug.length > 0 && !slug.includes('/') && !results.includes(slug)) {
-        results.push(slug);
-      }
+export interface ScrapeOptions {
+  limit?: number;
+  dryRun?: boolean;
+}
+
+export async function scrapeYC(options: ScrapeOptions = {}) {
+  const limit = options.limit ?? 1000;
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('Scrape limit must be a positive integer.');
+  const runId = randomUUID();
+  console.log(`Starting YC scrape. Target: ${limit} new unique companies${options.dryRun ? ' (dry run)' : ''}.`);
+  const snapshot = await retry(() => adminDb.collection('companies').select('slug').get(),
+    'Load existing company slugs', { retryable: retryableDatabaseError });
+  const existingSlugs = new Set<string>(snapshot.docs.map(doc => doc.get('slug'))
+    .filter((slug): slug is string => typeof slug === 'string' && !!slug));
+  console.log(`Firebase currently contains ${snapshot.size} company documents (${existingSlugs.size} unique slugs).`);
+
+  const api = await request.newContext({ timeout: 60_000 });
+  try {
+    const companies = await discoverCompanies(api);
+    const remaining = companies.filter(company => !existingSlugs.has(company.slug));
+    console.log(`YC directory: ${companies.length} unique companies; ${companies.length - remaining.length} already stored; ${remaining.length} new candidates.`);
+    if (options.dryRun) {
+      console.log(`Dry run: would attempt to save ${Math.min(limit, remaining.length)} new companies. No writes performed.`);
+      return { discovered: companies.length, candidates: remaining.length, target: limit, saved: 0 };
+    }
+
+    const summary = await runCompanies({
+      companies, existingSlugs, limit,
+      scrape: company => scrapeCompany(api, company),
+      save: (_company, details) => saveCompany(adminDb, details, runId),
     });
-    return results;
-  });
 
-  console.log(`Found ${companySlugs.length} YC companies in list. Deep scraping up to 10 new companies...`);
-  
-  let scrapedCount = 0;
-  // Deep scrape each company
-  for (const slug of companySlugs) {
-    if (scrapedCount >= 100) {
-      console.log('Reached limit of 100 new scraped companies.');
-      break;
+    console.log(`YC scrape summary: ${JSON.stringify(summary)}`);
+    if (summary.saved < limit) {
+      if (summary.failedSlugs.length) {
+        throw new Error(`Saved only ${summary.saved}/${limit}; ${summary.failedSlugs.length} profiles failed. Rerun to retry missing companies.`);
+      }
+      console.log(`Directory exhausted: saved all ${summary.saved} remaining new companies.`);
     }
-    try {
-      // Check if company already exists in DB
-      const companySnap = await adminDb.collection('companies').where('slug', '==', slug).limit(1).get();
-      const existingCompany = !companySnap.empty;
-      
-      if (existingCompany) {
-        console.log(`Company ${slug} already exists in DB. Skipping scrape.`);
-        continue;
-      }
-
-      if (page.isClosed() || !browser.isConnected()) {
-        console.log("Browser or page closed unexpectedly. Re-launching...");
-        try { await browser.close(); } catch {}
-        browser = await chromium.launch({ headless: true });
-        page = await browser.newPage();
-      }
-      
-      console.log(`Deep scraping YC company: ${slug}...`);
-      await page.goto(`https://www.ycombinator.com/companies/${slug}`, { waitUntil: 'networkidle' });
-      
-      const details = await page.evaluate((slugArg) => {
-        // Name usually in h1, fallback to text-2xl or 3xl
-        const h1 = document.querySelector('h1')?.textContent?.trim() || '';
-        const text2xl = document.querySelector('.text-2xl, .text-3xl')?.textContent?.trim() || '';
-        const name = h1 || text2xl || document.title.split(/[:|]/)[0].trim() || '';
-        const oneLiner = document.querySelector('.mb-1\\.5, .text-lg')?.textContent?.trim() || '';
-        let description = document.querySelector('.prose.max-w-full.whitespace-pre-line')?.textContent?.trim() || '';
-        if (!description) {
-          description = document.querySelector('.prose')?.textContent?.trim() || '';
-        }
-        if (oneLiner && description.startsWith(oneLiner)) {
-          description = description.substring(oneLiner.length).trim();
-        }
-        
-        // Links
-        const links = Array.from(document.querySelectorAll('a'));
-        // Exclude common header/footer links
-        const website = links.find(l => 
-          (l.textContent?.trim().includes('http') || l.href.includes('http')) && 
-          !l.href.includes('ycombinator.com') && 
-          !l.href.includes('startupschool.org') && 
-          !l.href.includes('twitter.com') && 
-          !l.href.includes('x.com') &&
-          !l.href.includes('linkedin.com') &&
-          !l.href.includes('facebook.com') &&
-          !l.href.includes('crunchbase.com')
-        )?.href || '';
-        
-        const twitterUrl = links.find(l => l.href.includes('twitter.com') || l.href.includes('x.com'))?.href || null;
-        const linkedinUrl = links.find(l => l.href.includes('linkedin.com/company'))?.href || null;
-        
-        // Find logo
-        const logoUrl = document.querySelector('img[src*="bookface"]')?.getAttribute('src') || null;
-        
-        // Stats and tags via spans and links
-        const allSpans = Array.from(document.querySelectorAll('span')).map(e => e.textContent?.trim() || '');
-        const foundedIndex = allSpans.findIndex(s => s === 'Founded:');
-        const foundedYear = foundedIndex >= 0 && foundedIndex < allSpans.length - 1 ? parseInt(allSpans[foundedIndex + 1]) : null;
-        
-        const teamIndex = allSpans.findIndex(s => s === 'Team Size:');
-        const employees = teamIndex >= 0 && teamIndex < allSpans.length - 1 ? allSpans[teamIndex + 1] : null;
-        
-        const locationIndex = allSpans.findIndex(s => s === 'Location:');
-        const location = locationIndex >= 0 && locationIndex < allSpans.length - 1 ? allSpans[locationIndex + 1] : 'San Francisco, CA';
-
-        const rawTags = Array.from(document.querySelectorAll('.yc-tw-Pill')).map(e => e.textContent?.trim()).filter(Boolean);
-        const tagsArray = Array.from(new Set(rawTags));
-        const tags = tagsArray.join(', ');
-        const ycUrl = window.location.href;
-        
-        // Find founders accurately using ycdc-card-new
-        const founders: { name: string, role: string, linkedinUrl: string | null, twitterUrl: string | null, bio: string }[] = [];
-        const founderCards = document.querySelectorAll('.ycdc-card-new');
-        founderCards.forEach(card => {
-          const nameEl = Array.from(card.querySelectorAll('div, h3')).find(el => {
-            const style = window.getComputedStyle(el);
-            return style.fontWeight === '700' || el.className.includes('font-bold');
-          }) || card.querySelector('div.font-bold, h3.font-bold, div[class*="font-bold"]');
-          
-          const founderName = nameEl ? nameEl.textContent?.trim() : null;
-          if (founderName && founderName.split(' ').length >= 2 && founderName.split(' ').length <= 4 && !founderName.includes('Program') && !founderName.includes('Resource')) {
-             const role = card.textContent?.match(/CEO|CTO|COO|Founder/i)?.[0] || 'Founder';
-             const bio = card.querySelector('.prose')?.textContent?.trim() || '';
-             const founderLinkedin = card.querySelector('a[href*="linkedin.com/in"]')?.getAttribute('href') || null;
-             const founderTwitter = card.querySelector('a[href*="twitter.com"], a[href*="x.com"]')?.getAttribute('href') || null;
-             
-             if (!founders.some(f => f.name === founderName)) {
-                founders.push({ name: founderName, role, linkedinUrl: founderLinkedin, twitterUrl: founderTwitter, bio });
-             }
-          }
-        });
-        
-        const fallbackFounders = [
-          {
-            name: `Founder of ${name}`,
-            role: 'CEO',
-            linkedinUrl: `https://linkedin.com/in/${slugArg}-ceo`,
-            twitterUrl: `https://twitter.com/${slugArg}_ceo`,
-            bio: `Visionary founder leading ${name}.`
-          }
-        ];
-
-        return { 
-          name,   
-          oneLiner: oneLiner || '',
-          description: description || `${name} is an innovative startup in the tech space.`, 
-          website: website || `https://${slugArg}.com`, 
-          twitterUrl: twitterUrl || null, 
-          linkedinUrl: linkedinUrl || null, 
-          logoUrl: logoUrl || `https://logo.clearbit.com/${slugArg}.com`, 
-          foundedYear: foundedYear || null, 
-          employees: employees || null, 
-          location: location || 'San Francisco, CA', 
-          tags,
-          ycUrl,
-          founders: founders.length > 0 ? founders : fallbackFounders 
-        };
-      }, slug);
-      
-      if (!details.name) continue;
-
-      // Upsert into DB
-      const companyRef = adminDb.collection('companies').doc();
-      const companyId = companyRef.id;
-
-      const batch = adminDb.batch();
-
-      batch.set(companyRef, {
-        id: companyId,
-        slug: slug,
-        name: details.name,
-        oneLiner: details.oneLiner,
-        description: details.description,
-        website: details.website,
-        twitterUrl: details.twitterUrl,
-        linkedinUrl: details.linkedinUrl,
-        logoUrl: details.logoUrl,
-        foundedYear: details.foundedYear,
-        employees: details.employees,
-        location: details.location,
-        tags: details.tags,
-        ycUrl: details.ycUrl,
-        vcBacker: 'YCombinator',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-
-      for (const f of details.founders) {
-        const founderRef = adminDb.collection('founders').doc();
-        batch.set(founderRef, {
-          id: founderRef.id,
-          companyId: companyId,
-          name: f.name,
-          role: f.role,
-          linkedinUrl: f.linkedinUrl,
-          twitterUrl: f.twitterUrl,
-          bio: f.bio,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-      }
-
-      await batch.commit();
-      console.log(`Successfully deep-scraped and saved: ${details.name} with ${details.founders.length} founders.`);
-      scrapedCount++;
-      
-    } catch (e: unknown) {
-      const err = e as Error;
-      if (err.name === 'TimeoutError' || err.message?.includes('Timeout')) {
-        console.error(`Timeout deep scraping ${slug}. Skipping...`);
-      } else {
-        console.error(`Error deep scraping ${slug}:`, err.message || err);
-      }
-    }
+    return summary;
+  } finally {
+    await api.dispose();
   }
-  
-  await browser.close();
-  console.log("Finished YCombinator deep scrape.");
+}
+
+export function parseOptions(args: string[]): ScrapeOptions {
+  const options: ScrapeOptions = {};
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === '--dry-run') options.dryRun = true;
+    else if (arg === '--limit' || arg.startsWith('--limit=')) {
+      const value = arg === '--limit' ? args[++index] : arg.slice('--limit='.length);
+      const limit = Number(value);
+      if (!value || !Number.isSafeInteger(limit) || limit < 1) {
+        throw new Error('--limit requires a positive integer.');
+      }
+      options.limit = limit;
+    } else throw new Error(`Unknown scraper option: ${arg}`);
+  }
+  return options;
 }
 
 if (require.main === module) {
-  scrapeYC().catch(console.error);
+  Promise.resolve().then(() => scrapeYC(parseOptions(process.argv.slice(2))))
+    .catch(error => {
+      console.error(`YC scrape failed: ${errorMessage(error)}`);
+      process.exitCode = 1;
+    });
 }
