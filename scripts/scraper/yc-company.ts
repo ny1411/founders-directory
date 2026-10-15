@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 import type { APIRequestContext } from 'playwright';
 import type { YCCompany } from './yc-directory';
+import { normalizeImageUrl } from '../../src/lib/image-url';
 
 interface PublicFounder {
   user_id?: number;
@@ -55,7 +56,8 @@ export function parseCompany(html: string, listing: YCCompany) {
       twitterUrl: data.twitter_url || null,
       linkedinUrl: data.linkedin_url || null,
       // Small logos have stable URLs; full-size page logos expire in an hour.
-      logoUrl: data.small_logo_url || listing.small_logo_thumb_url || null,
+      logoUrl: normalizeImageUrl(data.small_logo_url)
+        ?? normalizeImageUrl(listing.small_logo_thumb_url),
       foundedYear: Number.isFinite(data.year_founded) ? data.year_founded : null,
       employees: Number.isFinite(data.team_size) ? data.team_size : (listing.team_size ?? null),
       location: data.location || listing.all_locations || null,

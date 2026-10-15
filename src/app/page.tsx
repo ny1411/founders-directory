@@ -7,7 +7,6 @@ import { loadDirectoryPage } from "@/lib/directory-query"
 import { cn } from "@/lib/utils"
 import { Company } from "@/lib/types"
 import Link from "next/link"
-import Image from "next/image"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { buttonVariants } from "@/components/ui/button"
@@ -16,6 +15,7 @@ import { SubmitCompanyButton } from "@/components/submit-company-button"
 import { KeyboardShortcuts } from "@/components/keyboard-shortcuts"
 import { BatchSelect } from "@/components/batch-select"
 import { JsonLd } from "@/components/json-ld"
+import { EntityImage } from "@/components/entity-image"
 
 export default async function Home(props: {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>
@@ -159,9 +159,15 @@ export default async function Home(props: {
                 <Card className="h-full bg-card border border-border rounded-2xl p-6 flex flex-col gap-4 transition-all duration-200 hover:bg-accent/50 hover:border-foreground/20 shadow-none">
                   <div className="flex justify-between items-start gap-4">
                     <div className="flex gap-3 items-center">
-                      {company.logoUrl && (
-                        <Image src={company.logoUrl} alt={`${company.name} logo`} width={32} height={32} className="w-8 h-8 rounded-full object-cover border border-border" />
-                      )}
+                      <EntityImage
+                        src={company.logoUrl}
+                        alt={`${company.name} logo`}
+                        fallback="company"
+                        fallbackLabel={`${company.name} logo unavailable`}
+                        width={32}
+                        height={32}
+                        className="w-8 h-8 rounded-full object-cover border border-border"
+                      />
                       <h2 className="text-xl font-medium tracking-tight text-foreground group-hover:text-primary transition-colors">
                         {company.name}
                       </h2>

@@ -8,6 +8,8 @@ import { ArrowLeft, ExternalLink, Building2, MapPin, Users, Calendar } from "luc
 import { buttonVariants } from "@/components/ui/button"
 import { SendDmButton } from "@/components/send-dm-button"
 import { JsonLd } from "@/components/json-ld"
+import { EntityImage } from "@/components/entity-image"
+import { normalizeImageUrl } from "@/lib/image-url"
 
 export async function generateMetadata(
   props: { params: Promise<{ slug: string }> }
@@ -22,6 +24,7 @@ export async function generateMetadata(
   }
 
   const company = companySnapshot.docs[0].data() as Company;
+  const logoUrl = normalizeImageUrl(company.logoUrl) ?? '/icon.png';
 
   return {
     title: company.name,
@@ -33,7 +36,7 @@ export async function generateMetadata(
       siteName: "Founders Directory",
       images: [
         {
-          url: company.logoUrl || '/icon.png',
+          url: logoUrl,
           width: 800,
           height: 600,
         }
@@ -44,7 +47,7 @@ export async function generateMetadata(
       card: "summary_large_image",
       title: company.name,
       description: company.oneLiner || company.description || `View details about ${company.name}`,
-      images: [company.logoUrl || '/icon.png'],
+      images: [logoUrl],
     },
   }
 }
@@ -64,6 +67,7 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
   const founders = foundersSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Founder));
 
   const company = { ...companyData, founders };
+  const companyLogoUrl = normalizeImageUrl(company.logoUrl);
 
   const jsonLd = {
     "@context": "https://schema.org",
@@ -72,7 +76,7 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
         "@type": "Organization",
         name: company.name,
         url: `https://foundersdirectory.com/company/${company.slug}`,
-        logo: company.logoUrl,
+        logo: companyLogoUrl || undefined,
         description: company.oneLiner || company.description,
         sameAs: [
           company.website,
@@ -121,15 +125,15 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
       <section className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
         <div className="flex flex-col gap-6 max-w-3xl">
           <div className="flex items-center gap-4">
-            {company.logoUrl && (
-              <Image 
-                src={company.logoUrl} 
-                alt={`${company.name} logo`} 
-                width={80} 
-                height={80} 
-                className="w-20 h-20 rounded-2xl object-cover border border-border shadow-sm bg-card" 
-              />
-            )}
+            <EntityImage
+              src={company.logoUrl}
+              alt={`${company.name} logo`}
+              fallback="company"
+              fallbackLabel={`${company.name} logo unavailable`}
+              width={80}
+              height={80}
+              className="w-20 h-20 rounded-2xl object-cover border border-border shadow-sm bg-card"
+            />
             <div>
               <h1 className="font-serif text-4xl md:text-5xl text-foreground tracking-tight">
                 {company.name}
@@ -261,19 +265,15 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
             {company.founders.map(founder => (
               <div key={founder.id} className="bg-card border border-border rounded-2xl p-6 flex flex-col gap-4 shadow-sm group hover:border-foreground/20 transition-colors">
                 <div className="flex items-center gap-4">
-                  {founder.avatarUrl ? (
-                    <Image 
-                      src={founder.avatarUrl} 
-                      alt={founder.name} 
-                      width={64} 
-                      height={64} 
-                      className="w-16 h-16 rounded-full object-cover border border-border bg-secondary"
-                    />
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-secondary border border-border flex items-center justify-center shrink-0">
-                      <Users className="w-6 h-6 text-muted-foreground" />
-                    </div>
-                  )}
+                  <EntityImage
+                    src={founder.avatarUrl}
+                    alt={`${founder.name} avatar`}
+                    fallback="person"
+                    fallbackLabel={`${founder.name} avatar unavailable`}
+                    width={64}
+                    height={64}
+                    className="w-16 h-16 rounded-full object-cover border border-border bg-secondary"
+                  />
                   <div>
                     <h3 className="text-lg font-medium text-foreground group-hover:text-primary transition-colors">{founder.name}</h3>
                     <p className="text-sm font-medium text-secondary-foreground">{founder.role || "Founder"}</p>

@@ -5,6 +5,7 @@ import { parseCompany } from './yc-company';
 import { retry, runCompanies } from './yc-runner';
 import { saveCompany } from './yc-store';
 import type { Firestore } from 'firebase-admin/firestore';
+import { normalizeImageUrl } from '../../src/lib/image-url';
 
 const company = (slug: string, batch = 'Summer 2026'): YCCompany => ({ slug, name: slug, batch });
 const result = (hits: YCCompany[], nbHits = hits.length): SearchResult => ({
@@ -146,6 +147,18 @@ test('extracts actual founder data, retains zero employees, and uses stable logo
   assert.equal(details.founders[0].role, 'Founder/CTO');
   assert.equal(details.founders[0].twitterUrl, null);
   assert.deepEqual(details.company.tags, ['AI']);
+});
+
+test('normalizes YC missing-image placeholders and uses a valid listing logo', () => {
+  assert.equal(normalizeImageUrl('/company/thumb/missing.png'), null);
+  assert.equal(normalizeImageUrl('https://www.ycombinator.com/company/thumb/missing.png?size=64'), null);
+  assert.equal(normalizeImageUrl('  https://example.com/logo.png  '), 'https://example.com/logo.png');
+
+  const listing = { ...company('a'), small_logo_thumb_url: 'https://example.com/listing.png' };
+  const details = parseCompany(profile({
+    slug: 'a', name: 'A', small_logo_url: '/company/thumb/missing.png', founders: [],
+  }), listing);
+  assert.equal(details.company.logoUrl, 'https://example.com/listing.png');
 });
 
 test('does not fabricate missing founders or save error/redirect pages as companies', () => {
