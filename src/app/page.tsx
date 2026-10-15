@@ -2,8 +2,9 @@ import { adminDb } from "@/lib/firebase-admin"
 import { INDUSTRIES, loadIndustryCandidates, matchesIndustry, parseIndustry } from "@/lib/industry-filter"
 import { EMPLOYEE_RANGES, loadEmployeeCandidates, matchesEmployeeRange, parseEmployeeRange } from "@/lib/employee-filter"
 import { paginateCompanies } from "@/lib/company-pagination"
-import { getBatchOptions } from "@/lib/batch-options"
+import { getDirectoryOptions } from "@/lib/directory-options"
 import { loadBatchCandidates, matchesBatch, parseBatch } from "@/lib/batch-filter"
+import { loadVcCandidates, matchesVc, parseVc } from "@/lib/vc-filter"
 import { Company } from "@/lib/types"
 import { FieldPath, type Query } from "firebase-admin/firestore"
 import Link from "next/link"
@@ -20,9 +21,9 @@ import { Suspense } from "react"
 export default async function Home(props: {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
-  const [searchParams, batches] = await Promise.all([props.searchParams, getBatchOptions()]);
+  const [searchParams, { batches, vcs }] = await Promise.all([props.searchParams, getDirectoryOptions()]);
   const q = (searchParams?.q as string) || ""
-  const vc = (searchParams?.vc as string) || "all"
+  const vc = parseVc(searchParams?.vc, vcs)
   const industry = parseIndustry(searchParams?.industry)
   const sort = (searchParams?.sort as string) || "asc"
   const pageParam = searchParams?.page as string
@@ -39,17 +40,19 @@ export default async function Home(props: {
   let firstItemCursor: string | null;
   let lastItemCursor: string | null;
 
-  if (batch !== "all" || industry !== "all" || employees !== "all") {
+  if (batch !== "all" || industry !== "all" || employees !== "all" || vc !== "all") {
     const collection = adminDb.collection("companies");
     const candidates = batch !== "all"
       ? await loadBatchCandidates(collection, batch)
       : industry !== "all"
         ? await loadIndustryCandidates(collection, industry)
-        : await loadEmployeeCandidates(collection, employees);
+        : employees !== "all"
+          ? await loadEmployeeCandidates(collection, employees)
+          : await loadVcCandidates(collection, vc);
     const searchQ = q.trim().toLowerCase();
     const filtered = candidates.filter(company =>
       (!q || (company.slug >= searchQ && company.slug <= searchQ + "\uf8ff")) &&
-      (vc === "all" || company.vcBacker === vc) &&
+      matchesVc(company.vcBacker, vc) &&
       matchesBatch(company.batch, batch) &&
       matchesIndustry(company, industry) &&
       matchesEmployeeRange(company.employees, employees)
@@ -61,9 +64,6 @@ export default async function Home(props: {
     if (q) {
       const searchQ = q.trim().toLowerCase();
       companiesQuery = companiesQuery.where('slug', '>=', searchQ).where('slug', '<=', searchQ + '\uf8ff');
-    }
-    if (vc !== "all") {
-      companiesQuery = companiesQuery.where("vcBacker", "==", vc);
     }
 
     // Sort
@@ -109,8 +109,6 @@ export default async function Home(props: {
       : null;
   }
 
-  // Dummy filter arrays (In real app, you might group by from DB)
-  const vcs = ["YCombinator"]
   const industries = INDUSTRIES
   const employeeRanges = EMPLOYEE_RANGES
 
