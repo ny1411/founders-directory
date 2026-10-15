@@ -10,30 +10,36 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useCallback, useMemo } from "react";
-import { parseBatch, updateBatchParams } from "@/lib/batch-filter";
+import { parseSelections, updateDirectoryParams } from "@/lib/directory-filters";
 
 export function BatchSelect({ batches }: { batches: string[] }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const currentBatch = parseBatch(searchParams.get("batch"), batches);
+  const currentBatches = parseSelections(searchParams.getAll("batch"), batches);
 
   const items = useMemo(() => [
-    { value: "all", label: "All batches" },
     ...batches.map(batch => ({ value: batch, label: batch })),
   ], [batches]);
 
   const handleValueChange = useCallback(
-    (value: string | null) => {
-      const params = updateBatchParams(new URLSearchParams(searchParams.toString()), value);
+    (values: string[]) => {
+      const params = updateDirectoryParams(new URLSearchParams(searchParams.toString()), { batch: values });
       router.push(`/?${params.toString()}`);
     },
     [router, searchParams]
   );
 
   return (
-    <Select items={items} value={currentBatch} onValueChange={handleValueChange}>
-      <SelectTrigger className="w-full" aria-label="Batch">
-        <SelectValue placeholder="Select batch" />
+    <div className="flex flex-col gap-2">
+    <Select multiple items={items} value={currentBatches} onValueChange={handleValueChange}>
+      <SelectTrigger className="w-full min-w-0" aria-label="Batch">
+        <SelectValue className="min-w-0 truncate" placeholder="All batches">
+          {(values: string[]) => (
+            <span className="block truncate" title={values.length ? values.join(", ") : "All batches"}>
+              {values.length ? values.join(", ") : "All batches"}
+            </span>
+          )}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent className="max-h-[300px]">
         <SelectGroup>
@@ -45,5 +51,11 @@ export function BatchSelect({ batches }: { batches: string[] }) {
         </SelectGroup>
       </SelectContent>
     </Select>
+    {currentBatches.length > 0 && (
+      <button type="button" onClick={() => handleValueChange([])} className="text-xs text-left underline text-secondary-foreground">
+        Clear batches
+      </button>
+    )}
+    </div>
   );
 }

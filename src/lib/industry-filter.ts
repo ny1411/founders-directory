@@ -40,12 +40,12 @@ export function getIndustryConditions(industry: string): IndustryCondition[] {
 
 export function matchesIndustry(company: Pick<Company, "industry" | "tags">, industry: string): boolean {
   if (industry === "Unspecified") {
-    return !company.industry || company.industry === "Unspecified" || company.tags?.includes(industry) === true
+    return !company.industry || company.industry === "Unspecified" || (Array.isArray(company.tags) && company.tags.includes(industry))
   }
   const conditions = getIndustryConditions(industry)
   return conditions.length === 0 || conditions.some(condition =>
     condition.operator === "array-contains"
-      ? company.tags?.includes(condition.value) === true
+      ? Array.isArray(company.tags) && company.tags.includes(condition.value)
       : company.industry === condition.value
   )
 }
