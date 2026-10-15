@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { buttonVariants } from '@/components/ui/button';
@@ -32,12 +32,16 @@ interface ResumeData {
   };
 }
 
+type ProfileLoadState = 'loading' | 'ready' | 'empty' | 'auth-error' | 'backend-error';
+
 export default function ProfilePage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [resumeText, setResumeText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isRecoveringSession, setIsRecoveringSession] = useState(false);
+  const [profileLoadState, setProfileLoadState] = useState<ProfileLoadState>('loading');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
@@ -46,26 +50,86 @@ export default function ProfilePage() {
     }
   }, [user, loading, router]);
 
-  useEffect(() => {
-    const fetchProfile = async () => {
-      if (!user) return;
-      try {
-        const token = await user.getIdToken();
-        const res = await fetch('/api/profile', {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.resumeText) setResumeText(data.resumeText);
-        }
-      } catch (err) {
-        console.error('Failed to fetch profile', err);
+  const fetchProfile = useCallback(async (signal?: AbortSignal) => {
+    if (!user) return;
+
+    let token: string;
+    try {
+      token = await user.getIdToken();
+    } catch (error) {
+      if (!signal?.aborted) {
+        console.error('Failed to refresh the current session', error);
+        setProfileLoadState('auth-error');
       }
-    };
-    fetchProfile();
+      return;
+    }
+
+    if (signal?.aborted) return;
+    setProfileLoadState('loading');
+    setResumeText('');
+
+    try {
+      const res = await fetch('/api/profile', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        signal,
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        setProfileLoadState('auth-error');
+        return;
+      }
+
+      if (res.status === 404) {
+        setProfileLoadState('empty');
+        return;
+      }
+
+      if (!res.ok) {
+        setProfileLoadState('backend-error');
+        return;
+      }
+
+      const data: unknown = await res.json();
+      if (!data || typeof data !== 'object' || !('resumeText' in data)) {
+        setProfileLoadState('backend-error');
+        return;
+      }
+
+      const { resumeText: savedResumeText } = data as { resumeText: unknown };
+      if (savedResumeText == null || savedResumeText === '') {
+        setProfileLoadState('empty');
+        return;
+      }
+
+      if (typeof savedResumeText !== 'string') {
+        setProfileLoadState('backend-error');
+        return;
+      }
+
+      setResumeText(savedResumeText);
+      setProfileLoadState('ready');
+    } catch (error) {
+      if (signal?.aborted) return;
+      console.error('Failed to fetch profile', error);
+      setProfileLoadState('backend-error');
+    }
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      void fetchProfile(controller.signal);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [user, fetchProfile]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -163,20 +227,93 @@ export default function ProfilePage() {
     router.push('/');
   };
 
+  const handleSessionRecovery = async () => {
+    setIsRecoveringSession(true);
+    try {
+      await auth?.signOut();
+    } catch (error) {
+      console.error('Failed to clear the current session', error);
+    } finally {
+      router.replace('/login');
+    }
+  };
+
   if (loading || !user) {
     return <div className="p-8 text-center">Loading...</div>;
   }
 
+  const profileHeader = (
+    <div className="flex items-center justify-between mb-8">
+      <h1 className="text-3xl font-serif text-foreground">Your Profile</h1>
+      <button onClick={handleLogout} className={buttonVariants({ variant: "outline", size: "sm" })}>
+        Logout
+      </button>
+    </div>
+  );
+
+  if (profileLoadState === 'loading') {
+    return (
+      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
+        {profileHeader}
+        <div role="status" className="bg-card border border-border rounded-2xl p-8 text-center shadow-sm">
+          <p className="font-medium text-foreground">Loading your profile...</p>
+          <p className="text-sm text-muted-foreground mt-2">Checking for your saved resume.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (profileLoadState === 'auth-error') {
+    return (
+      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
+        {profileHeader}
+        <div role="alert" className="bg-card border border-destructive/40 rounded-2xl p-8 text-center shadow-sm">
+          <h2 className="text-xl font-medium text-foreground">Your session has expired</h2>
+          <p className="text-sm text-muted-foreground mt-2 mb-6">
+            Sign in again to securely load your saved profile.
+          </p>
+          <button
+            onClick={handleSessionRecovery}
+            disabled={isRecoveringSession}
+            className={buttonVariants({ variant: "default" })}
+          >
+            {isRecoveringSession ? 'Signing out...' : 'Sign in again'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (profileLoadState === 'backend-error') {
+    return (
+      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
+        {profileHeader}
+        <div role="alert" className="bg-card border border-destructive/40 rounded-2xl p-8 text-center shadow-sm">
+          <h2 className="text-xl font-medium text-foreground">We couldn&apos;t load your profile</h2>
+          <p className="text-sm text-muted-foreground mt-2 mb-6">
+            Your saved profile is still safe. Check your connection and try again.
+          </p>
+          <button onClick={() => void fetchProfile()} className={buttonVariants({ variant: "default" })}>
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-3xl font-serif text-foreground">Your Profile</h1>
-        <button onClick={handleLogout} className={buttonVariants({ variant: "outline", size: "sm" })}>
-          Logout
-        </button>
-      </div>
+      {profileHeader}
 
       <div className="space-y-8">
+        {profileLoadState === 'empty' && (
+          <div role="status" className="bg-primary/5 border border-primary/20 rounded-2xl p-4">
+            <p className="text-sm text-secondary-foreground">
+              No saved profile yet. Upload a resume below to create one.
+            </p>
+          </div>
+        )}
+
         {/* Card 1: Upload/Update */}
         <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
           <h2 className="text-xl font-medium mb-2">Upload Resume</h2>
