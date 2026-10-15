@@ -1,4 +1,6 @@
 import { adminDb } from "@/lib/firebase-admin"
+import { INDUSTRIES, loadIndustryCandidates, parseIndustry } from "@/lib/industry-filter"
+import { paginateCompanies } from "@/lib/company-pagination"
 import { Company } from "@/lib/types"
 import { FieldPath, type Query } from "firebase-admin/firestore"
 import Link from "next/link"
@@ -18,110 +20,117 @@ export default async function Home(props: {
   const searchParams = await props.searchParams;
   const q = (searchParams?.q as string) || ""
   const vc = (searchParams?.vc as string) || "all"
-  const industry = (searchParams?.industry as string) || "all"
+  const industry = parseIndustry(searchParams?.industry)
   const sort = (searchParams?.sort as string) || "asc"
   const pageParam = searchParams?.page as string
-  const page = pageParam ? parseInt(pageParam, 10) : 1
+  let page = pageParam ? parseInt(pageParam, 10) : 1
   const employees = (searchParams?.employees as string) || "all"
   const batch = (searchParams?.batch as string) || "all"
   const cursor = (searchParams?.cursor as string);
   const direction = (searchParams?.direction as string) || "next";
 
-  let companiesQuery: Query = adminDb.collection("companies");
-
-  if (q) {
-    const searchQ = q.trim().toLowerCase();
-    companiesQuery = companiesQuery.where('slug', '>=', searchQ).where('slug', '<=', searchQ + '\uf8ff');
-  }
-  if (vc !== "all") {
-    companiesQuery = companiesQuery.where("vcBacker", "==", vc);
-  }
-  if (industry !== "all") {
-    companiesQuery = companiesQuery.where("industry", "==", industry);
-  }
-  if (employees !== "all") {
-    if (employees === "1-10") {
-      companiesQuery = companiesQuery.where("employees", ">=", 1).where("employees", "<=", 10);
-    } else if (employees === "11-50") {
-      companiesQuery = companiesQuery.where("employees", ">=", 11).where("employees", "<=", 50);
-    } else if (employees === "51-200") {
-      companiesQuery = companiesQuery.where("employees", ">=", 51).where("employees", "<=", 200);
-    } else if (employees === "201-500") {
-      companiesQuery = companiesQuery.where("employees", ">=", 201).where("employees", "<=", 500);
-    } else if (employees === "501+") {
-      companiesQuery = companiesQuery.where("employees", ">=", 501);
-    }
-  }
-  if (batch !== "all") {
-    companiesQuery = companiesQuery.where("batch", "==", batch);
-  }
-
-  // Sort
-  const sortDirection = sort === 'asc' ? 'asc' : 'desc';
-
   const take = 10;
-  
-  // Base query separation: Get total count BEFORE applying orderBy
-  const countSnapshot = await companiesQuery.count().get();
-  const totalCount = countSnapshot.data().count;
-  const totalPages = Math.ceil(totalCount / take);
+  let companies: Company[];
+  let totalCount: number;
+  let totalPages: number;
+  let firstItemCursor: string | null;
+  let lastItemCursor: string | null;
 
-  // Apply sorting AFTER count
-  if (employees !== "all") {
-    companiesQuery = companiesQuery
-      .orderBy("employees", sortDirection)
-      .orderBy("slug", sortDirection)
-      .orderBy(FieldPath.documentId(), sortDirection);
+  if (industry !== "all") {
+    const candidates = await loadIndustryCandidates(adminDb.collection("companies"), industry);
+    const employeeBounds: Record<string, [number, number]> = {
+      "1-10": [1, 10], "11-50": [11, 50], "51-200": [51, 200],
+      "201-500": [201, 500], "501+": [501, Infinity],
+    };
+    const bounds = employeeBounds[employees];
+    const searchQ = q.trim().toLowerCase();
+    const filtered = candidates.filter(company =>
+      (!q || (company.slug >= searchQ && company.slug <= searchQ + "\uf8ff")) &&
+      (vc === "all" || company.vcBacker === vc) &&
+      (batch === "all" || company.batch === batch) &&
+      (!bounds || (typeof company.employees === "number" && company.employees >= bounds[0] && company.employees <= bounds[1]))
+    );
+    ({ companies, totalCount, totalPages, page, firstItemCursor, lastItemCursor } = paginateCompanies(filtered, page, sort, take));
   } else {
-    companiesQuery = companiesQuery
-      .orderBy("slug", sortDirection)
-      .orderBy(FieldPath.documentId(), sortDirection);
-  }
+    let companiesQuery: Query = adminDb.collection("companies");
 
-  if (cursor) {
-    try {
-      const [cursorName, cursorId] = JSON.parse(cursor);
-      if (direction === "prev") {
-        companiesQuery = companiesQuery.endBefore(cursorName, cursorId).limitToLast(take);
-      } else {
-        companiesQuery = companiesQuery.startAfter(cursorName, cursorId).limit(take);
+    if (q) {
+      const searchQ = q.trim().toLowerCase();
+      companiesQuery = companiesQuery.where('slug', '>=', searchQ).where('slug', '<=', searchQ + '\uf8ff');
+    }
+    if (vc !== "all") {
+      companiesQuery = companiesQuery.where("vcBacker", "==", vc);
+    }
+    if (employees !== "all") {
+      if (employees === "1-10") {
+        companiesQuery = companiesQuery.where("employees", ">=", 1).where("employees", "<=", 10);
+      } else if (employees === "11-50") {
+        companiesQuery = companiesQuery.where("employees", ">=", 11).where("employees", "<=", 50);
+      } else if (employees === "51-200") {
+        companiesQuery = companiesQuery.where("employees", ">=", 51).where("employees", "<=", 200);
+      } else if (employees === "201-500") {
+        companiesQuery = companiesQuery.where("employees", ">=", 201).where("employees", "<=", 500);
+      } else if (employees === "501+") {
+        companiesQuery = companiesQuery.where("employees", ">=", 501);
       }
-    } catch {
+    }
+    if (batch !== "all") {
+      companiesQuery = companiesQuery.where("batch", "==", batch);
+    }
+
+    // Sort
+    const sortDirection = sort === 'asc' ? 'asc' : 'desc';
+
+    // Base query separation: Get total count BEFORE applying orderBy
+    const countSnapshot = await companiesQuery.count().get();
+    totalCount = countSnapshot.data().count;
+    totalPages = Math.ceil(totalCount / take);
+
+    // Apply sorting AFTER count
+    if (employees !== "all") {
+      companiesQuery = companiesQuery
+        .orderBy("employees", sortDirection)
+        .orderBy("slug", sortDirection)
+        .orderBy(FieldPath.documentId(), sortDirection);
+    } else {
+      companiesQuery = companiesQuery
+        .orderBy("slug", sortDirection)
+        .orderBy(FieldPath.documentId(), sortDirection);
+    }
+
+    if (cursor) {
+      try {
+        const [cursorName, cursorId] = JSON.parse(cursor);
+        if (direction === "prev") {
+          companiesQuery = companiesQuery.endBefore(cursorName, cursorId).limitToLast(take);
+        } else {
+          companiesQuery = companiesQuery.startAfter(cursorName, cursorId).limit(take);
+        }
+      } catch {
+        companiesQuery = companiesQuery.limit(take);
+      }
+    } else {
       companiesQuery = companiesQuery.limit(take);
     }
-  } else {
-    companiesQuery = companiesQuery.limit(take);
+
+    const snapshot = await companiesQuery.get();
+
+    companies = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as Company[];
+
+    firstItemCursor = snapshot.docs.length > 0
+      ? JSON.stringify([ snapshot.docs[0].get("employees"), snapshot.docs[0].get("slug"), snapshot.docs[0].id])
+      : null;
+    lastItemCursor = snapshot.docs.length > 0
+      ? JSON.stringify([snapshot.docs[snapshot.docs.length - 1].get("employees"), snapshot.docs[snapshot.docs.length - 1].get("slug"), snapshot.docs[snapshot.docs.length - 1].id])
+      : null;
   }
-
-  const snapshot = await companiesQuery.get();
-
-  const companies = snapshot.docs.map(doc => ({
-    id: doc.id,
-    ...doc.data(),
-  })) as Company[];
-
-  const firstItemCursor = snapshot.docs.length > 0 
-    ? JSON.stringify([ snapshot.docs[0].get("employees"), snapshot.docs[0].get("slug"), snapshot.docs[0].id])
-    : null;
-  const lastItemCursor = snapshot.docs.length > 0 
-    ? JSON.stringify([snapshot.docs[snapshot.docs.length - 1].get("employees"), snapshot.docs[snapshot.docs.length - 1].get("slug"), snapshot.docs[snapshot.docs.length - 1].id])
-    : null;
 
   // Dummy filter arrays (In real app, you might group by from DB)
   const vcs = ["YCombinator"]
-  const industries = [
-    "B2B",
-    "Marketplace",
-    "Travel",
-    "Fintech",
-    "Consumer",
-    "Healthcare",
-    "Education",
-    "Industrials",
-    "Real Estate and Construction",
-    "Government",
-    "Unspecified"
-  ]
+  const industries = INDUSTRIES
   const employeeRanges = ["1-10", "11-50", "51-200", "201-500", "501+"]
 
   const buildUrl = (overrides: Record<string, string | number | null>) => {
