@@ -1,5 +1,6 @@
 import { adminDb } from "@/lib/firebase-admin"
 import { INDUSTRIES, loadIndustryCandidates, parseIndustry } from "@/lib/industry-filter"
+import { EMPLOYEE_RANGES, loadEmployeeCandidates, matchesEmployeeRange, parseEmployeeRange } from "@/lib/employee-filter"
 import { paginateCompanies } from "@/lib/company-pagination"
 import { Company } from "@/lib/types"
 import { FieldPath, type Query } from "firebase-admin/firestore"
@@ -24,7 +25,7 @@ export default async function Home(props: {
   const sort = (searchParams?.sort as string) || "asc"
   const pageParam = searchParams?.page as string
   let page = pageParam ? parseInt(pageParam, 10) : 1
-  const employees = (searchParams?.employees as string) || "all"
+  const employees = parseEmployeeRange(searchParams?.employees)
   const batch = (searchParams?.batch as string) || "all"
   const cursor = (searchParams?.cursor as string);
   const direction = (searchParams?.direction as string) || "next";
@@ -36,19 +37,17 @@ export default async function Home(props: {
   let firstItemCursor: string | null;
   let lastItemCursor: string | null;
 
-  if (industry !== "all") {
-    const candidates = await loadIndustryCandidates(adminDb.collection("companies"), industry);
-    const employeeBounds: Record<string, [number, number]> = {
-      "1-10": [1, 10], "11-50": [11, 50], "51-200": [51, 200],
-      "201-500": [201, 500], "501+": [501, Infinity],
-    };
-    const bounds = employeeBounds[employees];
+  if (industry !== "all" || employees !== "all") {
+    const collection = adminDb.collection("companies");
+    const candidates = industry !== "all"
+      ? await loadIndustryCandidates(collection, industry)
+      : await loadEmployeeCandidates(collection, employees);
     const searchQ = q.trim().toLowerCase();
     const filtered = candidates.filter(company =>
       (!q || (company.slug >= searchQ && company.slug <= searchQ + "\uf8ff")) &&
       (vc === "all" || company.vcBacker === vc) &&
       (batch === "all" || company.batch === batch) &&
-      (!bounds || (typeof company.employees === "number" && company.employees >= bounds[0] && company.employees <= bounds[1]))
+      matchesEmployeeRange(company.employees, employees)
     );
     ({ companies, totalCount, totalPages, page, firstItemCursor, lastItemCursor } = paginateCompanies(filtered, page, sort, take));
   } else {
@@ -60,19 +59,6 @@ export default async function Home(props: {
     }
     if (vc !== "all") {
       companiesQuery = companiesQuery.where("vcBacker", "==", vc);
-    }
-    if (employees !== "all") {
-      if (employees === "1-10") {
-        companiesQuery = companiesQuery.where("employees", ">=", 1).where("employees", "<=", 10);
-      } else if (employees === "11-50") {
-        companiesQuery = companiesQuery.where("employees", ">=", 11).where("employees", "<=", 50);
-      } else if (employees === "51-200") {
-        companiesQuery = companiesQuery.where("employees", ">=", 51).where("employees", "<=", 200);
-      } else if (employees === "201-500") {
-        companiesQuery = companiesQuery.where("employees", ">=", 201).where("employees", "<=", 500);
-      } else if (employees === "501+") {
-        companiesQuery = companiesQuery.where("employees", ">=", 501);
-      }
     }
     if (batch !== "all") {
       companiesQuery = companiesQuery.where("batch", "==", batch);
@@ -87,16 +73,9 @@ export default async function Home(props: {
     totalPages = Math.ceil(totalCount / take);
 
     // Apply sorting AFTER count
-    if (employees !== "all") {
-      companiesQuery = companiesQuery
-        .orderBy("employees", sortDirection)
-        .orderBy("slug", sortDirection)
-        .orderBy(FieldPath.documentId(), sortDirection);
-    } else {
-      companiesQuery = companiesQuery
-        .orderBy("slug", sortDirection)
-        .orderBy(FieldPath.documentId(), sortDirection);
-    }
+    companiesQuery = companiesQuery
+      .orderBy("slug", sortDirection)
+      .orderBy(FieldPath.documentId(), sortDirection);
 
     if (cursor) {
       try {
@@ -131,7 +110,7 @@ export default async function Home(props: {
   // Dummy filter arrays (In real app, you might group by from DB)
   const vcs = ["YCombinator"]
   const industries = INDUSTRIES
-  const employeeRanges = ["1-10", "11-50", "51-200", "201-500", "501+"]
+  const employeeRanges = EMPLOYEE_RANGES
 
   const buildUrl = (overrides: Record<string, string | number | null>) => {
     const params = new URLSearchParams()
