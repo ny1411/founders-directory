@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { createCompany } from '@/app/actions'
@@ -13,6 +13,33 @@ export default function NewCompanyPage() {
   const [founderCount, setFounderCount] = useState(1)
   const { user, loading } = useAuth()
   const router = useRouter()
+  const [submission, setSubmission] = useState({ error: '' })
+  const [pending, startTransition] = useTransition()
+
+  function submitCompany(event: FormEvent<HTMLFormElement>) {
+    // Native submission keeps uncontrolled fields intact when authentication fails.
+    event.preventDefault()
+    const formData = new FormData(event.currentTarget)
+    setSubmission({ error: '' })
+
+    startTransition(async () => {
+      if (!user) {
+        setSubmission({ error: 'Please sign in before adding a company.' })
+        return
+      }
+
+      let idToken: string
+      try {
+        idToken = await user.getIdToken(true)
+      } catch {
+        setSubmission({ error: 'Your session could not be refreshed. Please sign in again.' })
+        return
+      }
+
+      // Let Next handle the action's redirect exception after a successful save.
+      setSubmission(await createCompany(formData, idToken))
+    })
+  }
 
   useEffect(() => {
     if (!loading && !user) {
@@ -34,7 +61,10 @@ export default function NewCompanyPage() {
         <p className="text-muted-foreground">Fill in the details below to add a new company to the directory.</p>
       </div>
 
-      <form action={createCompany} className="flex flex-col gap-8">
+      <form onSubmit={submitCompany} aria-busy={pending} className="flex flex-col gap-8">
+        {submission.error && (
+          <p role="alert" className="text-destructive">{submission.error}</p>
+        )}
         {/* Company Details */}
         <Card>
           <CardHeader>
@@ -113,7 +143,7 @@ export default function NewCompanyPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between border-b border-border pb-2">
             <h2 className="text-2xl font-bold tracking-tight uppercase">Founders</h2>
-            <Button type="button" variant="outline" onClick={() => setFounderCount(prev => prev + 1)}>
+            <Button type="button" variant="outline" disabled={pending} onClick={() => setFounderCount(prev => prev + 1)}>
               + Add Founder
             </Button>
           </div>
@@ -170,8 +200,8 @@ export default function NewCompanyPage() {
           ))}
         </div>
 
-        <Button type="submit" size="lg" className="w-full md:w-auto self-end">
-          Save Company
+        <Button type="submit" size="lg" disabled={pending} className="w-full md:w-auto self-end">
+          {pending ? 'Saving Company…' : 'Save Company'}
         </Button>
       </form>
     </div>
