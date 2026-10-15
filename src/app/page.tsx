@@ -11,6 +11,7 @@ import { SubmitCompanyButton } from "@/components/submit-company-button"
 import { KeyboardShortcuts } from "@/components/keyboard-shortcuts"
 import { BatchSelect } from "@/components/batch-select"
 import { Suspense } from "react"
+import { JsonLd } from "@/components/json-ld"
 
 export default async function Home(props: {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>
@@ -175,7 +176,7 @@ export default async function Home(props: {
 
   return (
     <div className="flex flex-col gap-16 pb-16">
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <JsonLd data={jsonLd} />
       {/* Hero Section */}
       <section className="flex flex-col gap-6 max-w-3xl pt-10">
         <h1 className="font-serif text-5xl md:text-7xl leading-tight text-foreground tracking-tight">
