@@ -1,35 +1,39 @@
 'use client';
 
-import { useState } from 'react';
-import { signInWithPopup } from 'firebase/auth';
+import { useRef, useState } from 'react';
+import { signInWithPopup, type User } from 'firebase/auth';
 import { auth, googleProvider } from '@/lib/firebase';
 import { useRouter } from 'next/navigation';
 import { buttonVariants } from '@/components/ui/button';
 import Image from 'next/image';
+import { syncAuthenticatedUser } from '@/lib/sync-auth-user';
 
 export default function LoginPage() {
   const [error, setError] = useState('');
+  const [pending, setPending] = useState(false);
+  const signedInUser = useRef<User | null>(null);
+  const loginInProgress = useRef(false);
   const router = useRouter();
 
   const handleGoogleLogin = async () => {
+    if (loginInProgress.current) return;
+    loginInProgress.current = true;
+    setPending(true);
+    setError('');
     try {
       if (!auth) throw new Error("Firebase auth not initialized");
-      const result = await signInWithPopup(auth, googleProvider);
-      
-      // We can also create/update the User in Prisma here, but doing it in a Server Action or API might be better.
-      // For now, let's just create an API request to sync the user.
-      await fetch('/api/auth/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firebaseId: result.user.uid,
-          email: result.user.email,
-        }),
-      });
+      if (!signedInUser.current || auth.currentUser?.uid !== signedInUser.current.uid) {
+        const result = await signInWithPopup(auth, googleProvider);
+        signedInUser.current = result.user;
+      }
+      await syncAuthenticatedUser(signedInUser.current);
 
       router.push('/profile');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to login with Google.');
+    } finally {
+      loginInProgress.current = false;
+      setPending(false);
     }
   };
 
@@ -39,14 +43,16 @@ export default function LoginPage() {
         <h1 className="text-3xl font-serif text-foreground mb-2">Welcome Back</h1>
         <p className="text-secondary-foreground mb-8">Sign in to access your custom cold DMs</p>
         
-        {error && <div className="text-red-500 mb-4 text-sm">{error}</div>}
+        {error && <div role="alert" className="text-red-500 mb-4 text-sm">{error}</div>}
 
         <button 
           onClick={handleGoogleLogin} 
+          disabled={pending}
+          aria-busy={pending}
           className={buttonVariants({ variant: "default", className: "w-full flex items-center justify-center gap-2" })}
         >
           <Image src="https://www.svgrepo.com/show/475656/google-color.svg" width={20} height={20} className="w-5 h-5" alt="Google" />
-          Sign in with Google
+          {pending ? 'Signing in…' : error ? 'Try again' : 'Sign in with Google'}
         </button>
       </div>
     </div>
