@@ -1,7 +1,9 @@
 import { adminDb } from "@/lib/firebase-admin"
-import { INDUSTRIES, loadIndustryCandidates, parseIndustry } from "@/lib/industry-filter"
+import { INDUSTRIES, loadIndustryCandidates, matchesIndustry, parseIndustry } from "@/lib/industry-filter"
 import { EMPLOYEE_RANGES, loadEmployeeCandidates, matchesEmployeeRange, parseEmployeeRange } from "@/lib/employee-filter"
 import { paginateCompanies } from "@/lib/company-pagination"
+import { getBatchOptions } from "@/lib/batch-options"
+import { loadBatchCandidates, matchesBatch, parseBatch } from "@/lib/batch-filter"
 import { Company } from "@/lib/types"
 import { FieldPath, type Query } from "firebase-admin/firestore"
 import Link from "next/link"
@@ -18,7 +20,7 @@ import { Suspense } from "react"
 export default async function Home(props: {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
-  const searchParams = await props.searchParams;
+  const [searchParams, batches] = await Promise.all([props.searchParams, getBatchOptions()]);
   const q = (searchParams?.q as string) || ""
   const vc = (searchParams?.vc as string) || "all"
   const industry = parseIndustry(searchParams?.industry)
@@ -26,7 +28,7 @@ export default async function Home(props: {
   const pageParam = searchParams?.page as string
   let page = pageParam ? parseInt(pageParam, 10) : 1
   const employees = parseEmployeeRange(searchParams?.employees)
-  const batch = (searchParams?.batch as string) || "all"
+  const batch = parseBatch(searchParams?.batch, batches)
   const cursor = (searchParams?.cursor as string);
   const direction = (searchParams?.direction as string) || "next";
 
@@ -37,16 +39,19 @@ export default async function Home(props: {
   let firstItemCursor: string | null;
   let lastItemCursor: string | null;
 
-  if (industry !== "all" || employees !== "all") {
+  if (batch !== "all" || industry !== "all" || employees !== "all") {
     const collection = adminDb.collection("companies");
-    const candidates = industry !== "all"
-      ? await loadIndustryCandidates(collection, industry)
-      : await loadEmployeeCandidates(collection, employees);
+    const candidates = batch !== "all"
+      ? await loadBatchCandidates(collection, batch)
+      : industry !== "all"
+        ? await loadIndustryCandidates(collection, industry)
+        : await loadEmployeeCandidates(collection, employees);
     const searchQ = q.trim().toLowerCase();
     const filtered = candidates.filter(company =>
       (!q || (company.slug >= searchQ && company.slug <= searchQ + "\uf8ff")) &&
       (vc === "all" || company.vcBacker === vc) &&
-      (batch === "all" || company.batch === batch) &&
+      matchesBatch(company.batch, batch) &&
+      matchesIndustry(company, industry) &&
       matchesEmployeeRange(company.employees, employees)
     );
     ({ companies, totalCount, totalPages, page, firstItemCursor, lastItemCursor } = paginateCompanies(filtered, page, sort, take));
@@ -59,9 +64,6 @@ export default async function Home(props: {
     }
     if (vc !== "all") {
       companiesQuery = companiesQuery.where("vcBacker", "==", vc);
-    }
-    if (batch !== "all") {
-      companiesQuery = companiesQuery.where("batch", "==", batch);
     }
 
     // Sort
@@ -189,7 +191,7 @@ export default async function Home(props: {
           <div>
             <h3 className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-4">Batch</h3>
             <Suspense fallback={<div className="relative h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 shadow-sm" />}>
-              <BatchSelect />
+              <BatchSelect batches={batches} />
             </Suspense>
           </div>
 

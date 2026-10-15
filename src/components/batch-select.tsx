@@ -4,56 +4,45 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { useCallback, useMemo } from "react";
+import { parseBatch, updateBatchParams } from "@/lib/batch-filter";
 
-export function BatchSelect() {
+export function BatchSelect({ batches }: { batches: string[] }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const currentBatch = searchParams.get("batch") || "all";
+  const currentBatch = parseBatch(searchParams.get("batch"), batches);
 
-  const batches = useMemo(() => {
-    const seasons = ["Fall", "Summer", "Spring", "Winter"]; // Ordering within the same year? YC technically goes Winter -> Summer. So Winter is earliest in year. If we go descending: Fall, Summer, Spring, Winter.
-    const years = Array.from({ length: 2027 - 2005 + 1 }, (_, i) => 2027 - i);
-    const result: string[] = [];
-    years.forEach((year) => {
-      seasons.forEach((season) => {
-        result.push(`${season} ${year}`);
-      });
-    });
-    return result;
-  }, []);
+  const items = useMemo(() => [
+    { value: "all", label: "All batches" },
+    ...batches.map(batch => ({ value: batch, label: batch })),
+  ], [batches]);
 
   const handleValueChange = useCallback(
     (value: string | null) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (value === "all" || value === null) {
-        params.delete("batch");
-      } else {
-        params.set("batch", value);
-      }
-      params.delete("page"); // reset pagination
-      params.delete("cursor"); // reset pagination cursor
+      const params = updateBatchParams(new URLSearchParams(searchParams.toString()), value);
       router.push(`/?${params.toString()}`);
     },
     [router, searchParams]
   );
 
   return (
-    <Select value={currentBatch} onValueChange={handleValueChange}>
-      <SelectTrigger className="w-full">
+    <Select items={items} value={currentBatch} onValueChange={handleValueChange}>
+      <SelectTrigger className="w-full" aria-label="Batch">
         <SelectValue placeholder="Select batch" />
       </SelectTrigger>
       <SelectContent className="max-h-[300px]">
-        <SelectItem value="all">All batches</SelectItem>
-        {batches.map((batch) => (
-          <SelectItem key={batch} value={batch}>
-            {batch}
-          </SelectItem>
-        ))}
+        <SelectGroup>
+          {items.map(item => (
+            <SelectItem key={item.value} value={item.value}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
       </SelectContent>
     </Select>
   );
