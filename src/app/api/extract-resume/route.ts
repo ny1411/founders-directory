@@ -1,20 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
+import { adminAuth, adminDb } from '@/lib/firebase-admin';
+import { createResumeExtractionHandler } from '@/lib/resume-extraction-handler';
+import { reserveResumeExtractionAttempt } from '@/lib/resume-extraction-usage';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+export const runtime = 'nodejs';
 
-export async function POST(req: NextRequest) {
-  try {
-    const formData = await req.formData();
-    const file = formData.get('file') as File | null;
-
-    if (!file) {
-      return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
-    }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
+export const POST = createResumeExtractionHandler({
+  verifyToken: (token) => adminAuth.verifyIdToken(token, true),
+  reserveAttempt: (uid) => reserveResumeExtractionAttempt(adminDb, uid),
+  extract: async (buffer) => {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `
 You are an expert ATS (Applicant Tracking System) parser.
 Extract the following resume details into a structured JSON format. 
@@ -141,15 +136,7 @@ Structure the JSON as follows:
       },
     });
 
-    const text = response.text || "{}";
-    const jsonParsed = JSON.parse(text);
-
-    return NextResponse.json({ text: JSON.stringify(jsonParsed, null, 2) });
-  } catch (error) {
-    console.error('Error extracting PDF text:', error);
-    return NextResponse.json(
-      { error: 'Failed to extract text from PDF' },
-      { status: 500 }
-    );
-  }
-}
+    if (!response.text) throw new Error('Empty extraction response');
+    return response.text;
+  },
+});
