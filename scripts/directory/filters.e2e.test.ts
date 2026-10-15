@@ -29,7 +29,10 @@ before(async () => {
     .select("slug", "industry", "tags", "employees", "batch", "vcBacker").get()
   companies = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as StoredCompany))
   assert.ok(companies.length, "The integration database must contain companies")
-  browser = await chromium.launch({ headless: true })
+  browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+  })
 })
 
 after(async () => { await browser?.close() })
