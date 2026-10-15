@@ -7,6 +7,7 @@ import { Metadata } from "next"
 import { ArrowLeft, ExternalLink, Building2, MapPin, Users, Calendar } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import { SendDmButton } from "@/components/send-dm-button"
+import { JsonLd } from "@/components/json-ld"
 
 export async function generateMetadata(
   props: { params: Promise<{ slug: string }> }
@@ -107,10 +108,7 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
 
   return (
     <div className="flex flex-col gap-16 pb-16">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
       {/* Back Button */}
       <div>
         <Link href="/" className="inline-flex items-center text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">

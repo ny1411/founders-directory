@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { buttonVariants } from '@/components/ui/button';
 import { auth } from '@/lib/firebase';
+import { MAX_RESUME_BYTES, RESUME_SIZE_ERROR, RESUME_TYPE_ERROR } from '@/lib/resume-upload';
 
 interface Link { label: string; url: string; }
 interface WorkExperience { company: string; role: string; duration: string; description: string | string[] | Record<string, string>[]; url?: string; }
@@ -69,16 +70,42 @@ export default function ProfilePage() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Reset so the same file can be selected again after a rejected upload.
+    e.target.value = '';
+    if (!user) {
+      setMessage('Sign in again to upload your resume.');
+      return;
+    }
+    if (file.size > MAX_RESUME_BYTES) {
+      setMessage(RESUME_SIZE_ERROR);
+      return;
+    }
+    if (file.type !== 'application/pdf' || file.size < 5) {
+      setMessage(RESUME_TYPE_ERROR);
+      return;
+    }
 
     setIsExtracting(true);
     setMessage('');
     
     try {
+      if (await file.slice(0, 5).text() !== '%PDF-') {
+        setMessage(RESUME_TYPE_ERROR);
+        return;
+      }
+      let token: string;
+      try {
+        token = await user.getIdToken();
+      } catch {
+        setMessage('Your session has expired. Sign in again to upload your resume.');
+        return;
+      }
       const formData = new FormData();
       formData.append('file', file);
 
       const res = await fetch('/api/extract-resume', {
         method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
 
@@ -87,7 +114,13 @@ export default function ProfilePage() {
         setResumeText(data.text);
         setMessage('Resume extracted successfully! Review and hit Save.');
       } else {
-        setMessage('Failed to extract resume.');
+        const data = await res.json().catch(() => null);
+        const fallback = res.status === 401 ? 'Sign in again to upload your resume.'
+          : res.status === 413 ? RESUME_SIZE_ERROR
+          : res.status === 415 ? RESUME_TYPE_ERROR
+          : res.status === 429 ? 'Resume upload limit reached. Try again in 10 minutes.'
+          : 'Failed to extract resume. Your existing resume is unchanged.';
+        setMessage(typeof data?.error === 'string' ? data.error : fallback);
       }
     } catch (err) {
       console.error('Extraction error:', err);
@@ -148,7 +181,7 @@ export default function ProfilePage() {
         <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
           <h2 className="text-xl font-medium mb-2">Upload Resume</h2>
           <p className="text-secondary-foreground text-sm mb-6">
-            Upload your PDF resume to generate a structured profile. This information is used for customized cold DMs.
+            Upload your PDF resume (up to 5 MiB) to generate a structured profile. This information is used for customized cold DMs. You can make 5 extraction attempts every 10 minutes.
           </p>
 
           <div className="mb-4">
@@ -169,7 +202,7 @@ export default function ProfilePage() {
           </div>
           
           <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-green-500">{message}</span>
+            <span role="status" className="text-sm font-medium text-foreground">{message}</span>
             <button 
               onClick={handleSave} 
               disabled={isSaving || !resumeText}
