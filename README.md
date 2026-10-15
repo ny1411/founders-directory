@@ -56,6 +56,37 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Directory Filters
+
+Batch, VC Backer, Industry, and Employees support multiple selections. Options
+within a group match **any** selection; different groups must **all** match.
+B2B, Marketplace, and Travel require the exact stored tag. Other industry
+categories match either the industry field or an exact tag. Unspecified includes
+missing, null, and empty industries. Employee ranges require integer counts.
+
+Batch and VC options come from Firestore and are cached for five minutes. Filtered
+requests fetch candidates using one field, then apply the remaining groups,
+alphabetical sorting, counts, and pagination on the server. This avoids requiring
+composite indexes for every combination, but reads the full candidate set. The
+unfiltered directory keeps its count and limited page queries.
+
+Run the regression tests with:
+
+```bash
+npm run test:filters
+npm run build
+npx next start --hostname 127.0.0.1 --port 3000
+```
+
+In a second terminal, run `npm run test:filters:e2e`. The browser tests require
+Firebase Admin credentials in `.env` and Playwright Chromium. They compare rendered
+results with read-only Firestore data. Set `DIRECTORY_TEST_URL` to test another URL.
+
+The directory avoids a root loading boundary because this Next.js/React version
+can leave client navigation pending after data arrives, as reported in
+[Next.js issue #86151](https://github.com/vercel/next.js/issues/86151). The browser
+suite checks production filter clicks and pagination to catch this regression.
+
 ## YC Scraper
 
 With Firebase Admin credentials in `.env` and Playwright Chromium installed
