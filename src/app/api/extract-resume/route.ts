@@ -2,11 +2,14 @@ import { GoogleGenAI } from '@google/genai';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { createResumeExtractionHandler } from '@/lib/resume-extraction-handler';
 import { reserveResumeExtractionAttempt } from '@/lib/resume-extraction-usage';
+import { OnboardingStore } from '@/lib/onboarding/store';
 
 export const runtime = 'nodejs';
+const onboardingStore = new OnboardingStore(adminDb);
 
 export const POST = createResumeExtractionHandler({
   verifyToken: (token) => adminAuth.verifyIdToken(token, true),
+  authorizeUpload: async (uid) => (await onboardingStore.load(uid)).goal?.type === 'job',
   reserveAttempt: (uid) => reserveResumeExtractionAttempt(adminDb, uid),
   extract: async (buffer) => {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -139,4 +142,5 @@ Structure the JSON as follows:
     if (!response.text) throw new Error('Empty extraction response');
     return response.text;
   },
+  persist: (uid, parsed) => onboardingStore.saveResume(uid, parsed),
 });

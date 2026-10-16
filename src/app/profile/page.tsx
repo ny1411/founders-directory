@@ -1,587 +1,306 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
-import { buttonVariants } from '@/components/ui/button';
-import { auth } from '@/lib/firebase';
-import { MAX_RESUME_BYTES, RESUME_SIZE_ERROR, RESUME_TYPE_ERROR } from '@/lib/resume-upload';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, Check, FileText, LogOut } from "lucide-react";
 
-interface Link { label: string; url: string; }
-interface WorkExperience { company: string; role: string; duration: string; description: string | string[] | Record<string, string>[]; url?: string; }
-interface Project { name: string; description: string | string[] | Record<string, string>[]; url?: string; }
-interface Education { institution: string; degree: string; duration: string; url?: string; }
-interface Certificate { name: string; issuer: string; date: string; url?: string; }
-interface Extracurricular { name: string; duration: string; description: string | string[] | Record<string, string>[]; url?: string; }
-interface ResumeData {
-  name?: string;
-  location?: string;
-  email?: string;
-  phone?: string;
-  links?: Link[];
-  workExperience?: WorkExperience[];
-  projects?: Project[];
-  education?: Education[];
-  skills?: string[];
-  certificates?: Certificate[];
-  extracurriculars?: {
-    hackathons?: Extracurricular[];
-    competitions?: Extracurricular[];
-    otherExtracurriculars?: Extracurricular[];
-    [key: string]: Extracurricular[] | undefined;
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/context/AuthContext";
+import { auth } from "@/lib/firebase";
+import { getIntentQuestionnaire, QUESTIONNAIRE_VERSION, sharedQuestionnaire } from "@/lib/onboarding/questionnaires";
+import type { GoalStage, OnboardingState, QuestionnaireSection, UserIntent } from "@/lib/onboarding/types";
+import { MAX_RESUME_BYTES, RESUME_SIZE_ERROR, RESUME_TYPE_ERROR } from "@/lib/resume-upload";
+
+const intentOptions: Array<{ value: UserIntent; label: string; description: string }> = [
+  { value: "job", label: "Find a job or internship", description: "Show what you can build and find the right startup role." },
+  { value: "sell_services", label: "Sell services to businesses", description: "Define your offer, proof, and ideal customer." },
+  { value: "find_cofounder", label: "Find a cofounder", description: "Match on ambition, complementary skills, and working style." },
+  { value: "raise_capital", label: "Raise capital", description: "Explain your company, traction, and fundraising goal." },
+];
+
+const stageOptions: Array<{ value: GoalStage; label: string }> = [
+  { value: "exploring", label: "Exploring" },
+  { value: "actively_looking", label: "Actively looking" },
+  { value: "specific_opportunity", label: "I have a specific person or opportunity in mind" },
+  { value: "ready_to_talk", label: "Ready to start conversations" },
+];
+
+type LoadState = "loading" | "ready" | "auth-error" | "backend-error";
+
+function buildSummary(state: OnboardingState, answers: Record<string, string>) {
+  if (!state.goal) return "";
+  const opening = answers.introduction || answers.about || "";
+  const details: Record<UserIntent, string[]> = {
+    job: [answers.desired_role, answers.relevant_experience, answers.best_shipped],
+    sell_services: [answers.service, answers.service_audience, answers.problem_solved, answers.client_results],
+    find_cofounder: [answers.building, answers.founder_strengths, answers.missing_capabilities, answers.market_insight],
+    raise_capital: [answers.company, answers.fundraising_problem, answers.progress, answers.raise_amount],
   };
+  return [opening, ...details[state.goal.type]].filter(Boolean).join(" ").slice(0, 1200);
 }
 
-type ProfileLoadState = 'loading' | 'ready' | 'empty' | 'auth-error' | 'backend-error';
-
 export default function ProfilePage() {
-  const { user, loading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const [resumeText, setResumeText] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [isRecoveringSession, setIsRecoveringSession] = useState(false);
-  const [profileLoadState, setProfileLoadState] = useState<ProfileLoadState>('loading');
-  const [message, setMessage] = useState('');
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [state, setState] = useState<OnboardingState | null>(null);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [intent, setIntent] = useState<UserIntent | null>(null);
+  const [stage, setStage] = useState<GoalStage | null>(null);
+  const [summary, setSummary] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const autosaveSequence = useRef(0);
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login');
-    }
-  }, [user, loading, router]);
-
-  const fetchProfile = useCallback(async (signal?: AbortSignal) => {
-    if (!user) return;
-
-    let token: string;
-    try {
-      token = await user.getIdToken();
-    } catch (error) {
-      if (!signal?.aborted) {
-        console.error('Failed to refresh the current session', error);
-        setProfileLoadState('auth-error');
-      }
-      return;
-    }
-
-    if (signal?.aborted) return;
-    setProfileLoadState('loading');
-    setResumeText('');
-
-    try {
-      const res = await fetch('/api/profile', {
-        headers: {
-          Authorization: `Bearer ${token}`
-        },
-        signal,
-      });
-
-      if (res.status === 401 || res.status === 403) {
-        setProfileLoadState('auth-error');
-        return;
-      }
-
-      if (res.status === 404) {
-        setProfileLoadState('empty');
-        return;
-      }
-
-      if (!res.ok) {
-        setProfileLoadState('backend-error');
-        return;
-      }
-
-      const data: unknown = await res.json();
-      if (!data || typeof data !== 'object' || !('resumeText' in data)) {
-        setProfileLoadState('backend-error');
-        return;
-      }
-
-      const { resumeText: savedResumeText } = data as { resumeText: unknown };
-      if (savedResumeText == null || savedResumeText === '') {
-        setProfileLoadState('empty');
-        return;
-      }
-
-      if (typeof savedResumeText !== 'string') {
-        setProfileLoadState('backend-error');
-        return;
-      }
-
-      setResumeText(savedResumeText);
-      setProfileLoadState('ready');
-    } catch (error) {
-      if (signal?.aborted) return;
-      console.error('Failed to fetch profile', error);
-      setProfileLoadState('backend-error');
-    }
+  const request = useCallback(async (method: "GET" | "POST", body?: Record<string, unknown>) => {
+    if (!user) throw new Error("Your session has expired.");
+    const token = await user.getIdToken();
+    const response = await fetch("/api/onboarding", {
+      method,
+      headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(typeof payload?.error === "string" ? payload.error : "Unable to save your profile.");
+    return payload as OnboardingState;
   }, [user]);
 
+  const applyState = useCallback((next: OnboardingState) => {
+    setState(next);
+    const combined = { ...(next.profile?.answers ?? {}), ...(next.goal?.answers ?? {}) };
+    setAnswers(combined);
+    setSummary(next.goal?.summary || buildSummary(next, combined));
+    setIntent(next.goal?.type ?? null);
+    setStage(next.goal?.stage ?? null);
+    setDirty(false);
+  }, []);
+
+  const loadOnboarding = useCallback(async () => {
+    setLoadState("loading");
+    try {
+      applyState(await request("GET"));
+      setLoadState("ready");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to load onboarding.");
+      setLoadState(error instanceof Error && /session|Unauthorized/i.test(error.message) ? "auth-error" : "backend-error");
+    }
+  }, [applyState, request]);
+
+  useEffect(() => {
+    if (!authLoading && !user) router.replace("/login");
+  }, [authLoading, router, user]);
+
   useEffect(() => {
     if (!user) return;
+    const timeout = window.setTimeout(() => { void loadOnboarding(); }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [loadOnboarding, user]);
 
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => {
-      void fetchProfile(controller.signal);
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [user, fetchProfile]);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    // Reset so the same file can be selected again after a rejected upload.
-    e.target.value = '';
-    if (!user) {
-      setMessage('Sign in again to upload your resume.');
-      return;
-    }
-    if (file.size > MAX_RESUME_BYTES) {
-      setMessage(RESUME_SIZE_ERROR);
-      return;
-    }
-    if (file.type !== 'application/pdf' || file.size < 5) {
-      setMessage(RESUME_TYPE_ERROR);
-      return;
-    }
-
-    setIsExtracting(true);
-    setMessage('');
-    
+  const saveAnswers = useCallback(async (showMessage = false) => {
+    if (!state?.goal) return;
+    const sequence = ++autosaveSequence.current;
+    setSaving(true);
     try {
-      if (await file.slice(0, 5).text() !== '%PDF-') {
-        setMessage(RESUME_TYPE_ERROR);
-        return;
+      const next = await request("POST", { action: "save_answers", questionnaireVersion: QUESTIONNAIRE_VERSION, answers });
+      if (sequence === autosaveSequence.current) {
+        setState(next);
+        setDirty(false);
+        if (showMessage) setMessage("Answers saved.");
       }
-      let token: string;
-      try {
-        token = await user.getIdToken();
-      } catch {
-        setMessage('Your session has expired. Sign in again to upload your resume.');
-        return;
-      }
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const res = await fetch('/api/extract-resume', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setResumeText(data.text);
-        setMessage('Resume extracted successfully! Review and hit Save.');
-      } else {
-        const data = await res.json().catch(() => null);
-        const fallback = res.status === 401 ? 'Sign in again to upload your resume.'
-          : res.status === 413 ? RESUME_SIZE_ERROR
-          : res.status === 415 ? RESUME_TYPE_ERROR
-          : res.status === 429 ? 'Resume upload limit reached. Try again in 10 minutes.'
-          : 'Failed to extract resume. Your existing resume is unchanged.';
-        setMessage(typeof data?.error === 'string' ? data.error : fallback);
-      }
-    } catch (err) {
-      console.error('Extraction error:', err);
-      setMessage('Error extracting resume.');
+    } catch (error) {
+      if (sequence === autosaveSequence.current) setMessage(error instanceof Error ? error.message : "Unable to save answers.");
+      throw error;
     } finally {
-      setIsExtracting(false);
+      if (sequence === autosaveSequence.current) setSaving(false);
     }
+  }, [answers, request, state?.goal]);
+
+  useEffect(() => {
+    if (!dirty || !state?.goal || !["shared", "intent_questions"].includes(state.goal.currentStep)) return;
+    const timeout = window.setTimeout(() => { void saveAnswers().catch(() => undefined); }, 800);
+    return () => window.clearTimeout(timeout);
+  }, [dirty, saveAnswers, state?.goal]);
+
+  const selectIntent = async () => {
+    if (!intent || !stage) return setMessage("Choose what you want to accomplish and your current stage.");
+    setSaving(true);
+    setMessage("");
+    try { applyState(await request("POST", { action: "select_intent", intent, stage })); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Unable to start onboarding."); }
+    finally { setSaving(false); }
   };
 
-  const handleSave = async () => {
-    if (!user) return;
-    setIsSaving(true);
-    setMessage('');
+  const uploadResume = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !user) return;
+    if (file.size > MAX_RESUME_BYTES) return setMessage(RESUME_SIZE_ERROR);
+    if (file.type !== "application/pdf" || file.size < 5 || await file.slice(0, 5).text() !== "%PDF-") return setMessage(RESUME_TYPE_ERROR);
+    setExtracting(true);
+    setMessage("");
     try {
       const token = await user.getIdToken();
-      const res = await fetch('/api/profile', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ resumeText }),
-      });
-      
-      if (res.ok) {
-        setMessage('Resume saved successfully!');
-        router.push('/');
-      } else {
-        setMessage('Failed to save resume.');
-      }
-    } catch {
-      setMessage('Error saving resume.');
-    } finally {
-      setIsSaving(false);
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/extract-resume", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(typeof payload?.error === "string" ? payload.error : "Unable to extract this resume.");
+      await loadOnboarding();
+      setMessage("Resume imported. Review the details we prefilled, then tell us what the document cannot.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Unable to extract this resume."); }
+    finally { setExtracting(false); }
+  };
+
+  const advanceQuestions = async (section: QuestionnaireSection, nextStep: "intent_questions" | "review") => {
+    const missing = section.questions.filter((question) => question.required && !answers[question.id]?.trim());
+    if (missing.length) {
+      setMessage(`Answer the required question: ${missing[0].label}`);
+      document.getElementById(missing[0].id)?.focus();
+      return;
     }
-  };
-
-  const handleLogout = async () => {
-    await auth?.signOut();
-    router.push('/');
-  };
-
-  const handleSessionRecovery = async () => {
-    setIsRecoveringSession(true);
+    setMessage("");
+    setSaving(true);
     try {
-      await auth?.signOut();
-    } catch (error) {
-      console.error('Failed to clear the current session', error);
-    } finally {
-      router.replace('/login');
-    }
+      await saveAnswers();
+      applyState(await request("POST", { action: "set_step", step: nextStep }));
+    } catch { /* saveAnswers reports the error */ }
+    finally { setSaving(false); }
   };
 
-  if (loading || !user) {
-    return <div className="p-8 text-center">Loading...</div>;
+  const goBack = async (step: "shared" | "intent_questions") => {
+    setSaving(true);
+    try { applyState(await request("POST", { action: "set_step", step })); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Unable to go back."); }
+    finally { setSaving(false); }
+  };
+
+  const finish = async () => {
+    setSaving(true);
+    setMessage("");
+    try {
+      await request("POST", { action: "save_summary", summary });
+      applyState(await request("POST", { action: "complete" }));
+      setMessage("Your profile is ready.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Unable to finish onboarding."); }
+    finally { setSaving(false); }
+  };
+
+  const currentSection = state?.goal
+    ? state.goal.currentStep === "shared" ? sharedQuestionnaire : getIntentQuestionnaire(state.goal.type)
+    : null;
+
+  if (authLoading || !user || loadState === "loading") {
+    return <div className="mx-auto max-w-3xl py-20 text-center text-muted-foreground" role="status">Loading your onboarding…</div>;
   }
 
-  const profileHeader = (
-    <div className="flex items-center justify-between mb-8">
-      <h1 className="text-3xl font-serif text-foreground">Your Profile</h1>
-      <button onClick={handleLogout} className={buttonVariants({ variant: "outline", size: "sm" })}>
-        Logout
-      </button>
-    </div>
-  );
-
-  if (profileLoadState === 'loading') {
+  if (loadState !== "ready" || !state) {
     return (
-      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
-        {profileHeader}
-        <div role="status" className="bg-card border border-border rounded-2xl p-8 text-center shadow-sm">
-          <p className="font-medium text-foreground">Loading your profile...</p>
-          <p className="text-sm text-muted-foreground mt-2">Checking for your saved resume.</p>
-        </div>
-      </div>
+      <Card className="mx-auto mt-16 max-w-xl">
+        <CardHeader><CardTitle>We couldn’t load your profile</CardTitle><CardDescription>{message}</CardDescription></CardHeader>
+        <CardFooter className="justify-end"><Button onClick={() => void loadOnboarding()}>Try again</Button></CardFooter>
+      </Card>
     );
   }
 
-  if (profileLoadState === 'auth-error') {
-    return (
-      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
-        {profileHeader}
-        <div role="alert" className="bg-card border border-destructive/40 rounded-2xl p-8 text-center shadow-sm">
-          <h2 className="text-xl font-medium text-foreground">Your session has expired</h2>
-          <p className="text-sm text-muted-foreground mt-2 mb-6">
-            Sign in again to securely load your saved profile.
-          </p>
-          <button
-            onClick={handleSessionRecovery}
-            disabled={isRecoveringSession}
-            className={buttonVariants({ variant: "default" })}
-          >
-            {isRecoveringSession ? 'Signing out...' : 'Sign in again'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (profileLoadState === 'backend-error') {
-    return (
-      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
-        {profileHeader}
-        <div role="alert" className="bg-card border border-destructive/40 rounded-2xl p-8 text-center shadow-sm">
-          <h2 className="text-xl font-medium text-foreground">We couldn&apos;t load your profile</h2>
-          <p className="text-sm text-muted-foreground mt-2 mb-6">
-            Your saved profile is still safe. Check your connection and try again.
-          </p>
-          <button onClick={() => void fetchProfile()} className={buttonVariants({ variant: "default" })}>
-            Try again
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const step = state.goal?.currentStep ?? "intent";
+  const stepNumber = step === "intent" ? 1 : step === "resume" || step === "shared" || step === "intent_questions" ? 2 : 3;
 
   return (
-    <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
-      {profileHeader}
-
-      <div className="space-y-8">
-        {profileLoadState === 'empty' && (
-          <div role="status" className="bg-primary/5 border border-primary/20 rounded-2xl p-4">
-            <p className="text-sm text-secondary-foreground">
-              No saved profile yet. Upload a resume below to create one.
-            </p>
-          </div>
-        )}
-
-        {/* Card 1: Upload/Update */}
-        <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-          <h2 className="text-xl font-medium mb-2">Upload Resume</h2>
-          <p className="text-secondary-foreground text-sm mb-6">
-            Upload your PDF resume (up to 5 MiB) to generate a structured profile. This information is used for customized cold DMs. You can make 5 extraction attempts every 10 minutes.
-          </p>
-
-          <div className="mb-4">
-            <input 
-              type="file" 
-              accept="application/pdf"
-              onChange={handleFileUpload}
-              disabled={isExtracting}
-              className="block w-full text-sm text-foreground
-                file:mr-4 file:py-2 file:px-4
-                file:rounded-md file:border-0
-                file:text-sm file:font-semibold
-                file:bg-primary/10 file:text-primary
-                hover:file:bg-primary/20
-                cursor-pointer"
-            />
-            {isExtracting && <span className="text-sm text-muted-foreground mt-2 block">Extracting text from PDF...</span>}
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <span role="status" className="text-sm font-medium text-foreground">{message}</span>
-            <button 
-              onClick={handleSave} 
-              disabled={isSaving || !resumeText}
-              className={buttonVariants({ variant: "default" })}
-            >
-              {isSaving ? 'Saving...' : 'Save Profile'}
-            </button>
-          </div>
+    <main className="mx-auto flex max-w-4xl flex-col gap-8 px-4 py-12 sm:px-6">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Step {stepNumber} of 3</p>
+          <h1 className="font-serif text-4xl tracking-tight">Build a profile with a purpose</h1>
+          <p className="max-w-2xl text-muted-foreground">We’ll use your answers to find relevant people and write outreach that sounds like you.</p>
         </div>
+        <Button variant="outline" size="sm" onClick={() => void auth?.signOut().then(() => router.push("/"))}>
+          <LogOut data-icon="inline-start" /> Logout
+        </Button>
+      </header>
 
-        {/* Structured Profile Views */}
-        {(() => {
-          let parsed: ResumeData | null = null;
-          try {
-            if (resumeText) parsed = JSON.parse(resumeText);
-          } catch {
-            return (
-              <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                <h2 className="text-xl font-medium mb-2 text-destructive">Invalid Resume Data</h2>
-                <p className="text-sm text-muted-foreground">The resume data could not be parsed as structured information.</p>
-                <textarea
-                  className="w-full h-64 p-4 mt-4 rounded-xl border border-border bg-background text-foreground resize-y focus:outline-none"
-                  value={resumeText}
-                  onChange={(e) => setResumeText(e.target.value)}
-                />
-              </div>
-            );
-          }
-
-          if (!parsed) return null;
-
-          const renderDescription = (desc: string | string[] | Record<string, string>[] | undefined) => {
-            if (!desc) return null;
-            if (Array.isArray(desc)) {
-              return (
-                <ul className="list-disc list-inside space-y-1 mt-2 text-sm text-secondary-foreground">
-                  {desc.map((point: string | Record<string, string>, idx: number) => (
-                    <li key={idx}>
-                      {typeof point === 'string' ? point : Object.values(point)[0] as string}
-                    </li>
-                  ))}
-                </ul>
-              );
-            }
-            return <p className="mt-2 text-sm text-secondary-foreground">{desc}</p>;
-          };
-
-          return (
-            <>
-              {/* Card 2: Personal Details */}
-              <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                <h2 className="text-xl font-medium border-b border-border pb-3 mb-4">Personal Details</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <h3 className="text-sm font-semibold text-muted-foreground">Name</h3>
-                    <p className="text-foreground">{parsed.name || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-muted-foreground">Location</h3>
-                    <p className="text-foreground">{parsed.location || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-muted-foreground">Email</h3>
-                    <p className="text-foreground">{parsed.email || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-muted-foreground">Phone</h3>
-                    <p className="text-foreground">{parsed.phone || 'N/A'}</p>
-                  </div>
-                </div>
-                {parsed.links && parsed.links.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-border">
-                    <h3 className="text-sm font-semibold text-muted-foreground mb-2">Socials & Links</h3>
-                    <div className="flex flex-wrap gap-3">
-                      {parsed.links.map((link: Link, idx: number) => (
-                        <a key={idx} href={link.url} target="_blank" rel="noreferrer" className="text-primary hover:underline text-sm font-medium">
-                          {link.label || link.url}
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Card 3: Work Experience */}
-              {parsed.workExperience && parsed.workExperience.length > 0 && (
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                  <h2 className="text-xl font-medium border-b border-border pb-3 mb-4">Work Experience</h2>
-                  <div className="space-y-6">
-                    {parsed.workExperience.map((exp: WorkExperience, idx: number) => (
-                      <div key={idx} className={idx !== (parsed.workExperience?.length || 0) - 1 ? "border-b border-border pb-6" : ""}>
-                        <div className="flex justify-between items-start mb-1">
-                          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                            {exp.company}
-                            {exp.url && (
-                              <a href={exp.url} target="_blank" rel="noreferrer" className="text-primary text-sm font-normal hover:underline">
-                                (Link)
-                              </a>
-                            )}
-                          </h3>
-                          <span className="text-sm font-medium text-muted-foreground bg-secondary px-2 py-1 rounded">{exp.duration}</span>
-                        </div>
-                        <p className="text-primary font-medium mb-2">{exp.role}</p>
-                        {renderDescription(exp.description)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Card 4: Projects */}
-              {parsed.projects && parsed.projects.length > 0 && (
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                  <h2 className="text-xl font-medium border-b border-border pb-3 mb-4">Projects</h2>
-                  <div className="space-y-6">
-                    {parsed.projects.map((proj: Project, idx: number) => (
-                      <div key={idx} className={idx !== (parsed.projects?.length || 0) - 1 ? "border-b border-border pb-6" : ""}>
-                        <div className="flex justify-between items-start mb-1">
-                          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                            {proj.name}
-                            {proj.url && (
-                              <a href={proj.url} target="_blank" rel="noreferrer" className="text-primary text-sm font-normal hover:underline">
-                                (Link)
-                              </a>
-                            )}
-                          </h3>
-                        </div>
-                        {renderDescription(proj.description)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Card 5: Education */}
-              {parsed.education && parsed.education.length > 0 && (
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                  <h2 className="text-xl font-medium border-b border-border pb-3 mb-4">Education</h2>
-                  <div className="space-y-4">
-                    {parsed.education.map((edu: Education, idx: number) => (
-                      <div key={idx} className="flex justify-between items-start">
-                        <div>
-                          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                            {edu.institution}
-                            {edu.url && (
-                              <a href={edu.url} target="_blank" rel="noreferrer" className="text-primary text-sm font-normal hover:underline">
-                                (Link)
-                              </a>
-                            )}
-                          </h3>
-                          <p className="text-secondary-foreground">{edu.degree}</p>
-                        </div>
-                        <span className="text-sm font-medium text-muted-foreground bg-secondary px-2 py-1 rounded">{edu.duration}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Card 6: Skills */}
-              {parsed.skills && parsed.skills.length > 0 && (
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                  <h2 className="text-xl font-medium border-b border-border pb-3 mb-4">Skills</h2>
-                  <div className="flex flex-wrap gap-2">
-                    {parsed.skills.map((skill: string, idx: number) => (
-                      <span key={idx} className="bg-primary/10 text-primary px-3 py-1 rounded-full text-sm font-medium">
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Card 7: Certificates */}
-              {parsed.certificates && parsed.certificates.length > 0 && (
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                  <h2 className="text-xl font-medium border-b border-border pb-3 mb-4">Certificates</h2>
-                  <div className="space-y-4">
-                    {parsed.certificates.map((cert: Certificate, idx: number) => (
-                      <div key={idx} className="flex justify-between items-start">
-                        <div>
-                          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
-                            {cert.name}
-                            {cert.url && (
-                              <a href={cert.url} target="_blank" rel="noreferrer" className="text-primary text-sm font-normal hover:underline">
-                                (Link)
-                              </a>
-                            )}
-                          </h3>
-                          <p className="text-secondary-foreground">{cert.issuer}</p>
-                        </div>
-                        {cert.date && <span className="text-sm font-medium text-muted-foreground bg-secondary px-2 py-1 rounded">{cert.date}</span>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Card 8: Extracurriculars */}
-              {parsed.extracurriculars && (
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-                  <h2 className="text-xl font-medium border-b border-border pb-3 mb-4">Extracurriculars</h2>
-                  <div className="space-y-6">
-                    {['hackathons', 'competitions', 'otherExtracurriculars'].map((cat) => {
-                      const items = parsed.extracurriculars?.[cat];
-                      if (!items || items.length === 0) return null;
-                      
-                      const title = cat === 'hackathons' ? 'Hackathons' : 
-                                    cat === 'competitions' ? 'Competitions' : 
-                                    'Other Activities';
-                      
-                      return (
-                        <div key={cat}>
-                          <h3 className="text-lg font-semibold text-foreground mb-3">{title}</h3>
-                          <div className="space-y-4 pl-4 border-l-2 border-border/50">
-                            {items.map((item: Extracurricular, idx: number) => (
-                              <div key={idx}>
-                                <div className="flex justify-between items-start mb-1">
-                                  <h4 className="font-medium text-foreground flex items-center gap-2">
-                                    {item.name}
-                                    {item.url && (
-                                      <a href={item.url} target="_blank" rel="noreferrer" className="text-primary text-xs font-normal hover:underline">
-                                        (Link)
-                                      </a>
-                                    )}
-                                  </h4>
-                                  <span className="text-xs font-medium text-muted-foreground">{item.duration}</span>
-                                </div>
-                                {renderDescription(item.description)}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </>
-          );
-        })()}
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-label={`Onboarding step ${stepNumber} of 3`} role="progressbar" aria-valuemin={1} aria-valuemax={3} aria-valuenow={stepNumber}>
+        <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${(stepNumber / 3) * 100}%` }} />
       </div>
-    </div>
+
+      {step === "intent" ? (
+        <Card>
+          <CardHeader><CardTitle>What are you here to do?</CardTitle><CardDescription>Choose one primary goal for now. The underlying profile can support additional goals later.</CardDescription></CardHeader>
+          <CardContent className="flex flex-col gap-6">
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Primary goal
+              <Select items={intentOptions} value={intent} onValueChange={(value) => setIntent(value as UserIntent)}>
+                <SelectTrigger className="w-full" aria-label="Primary goal"><SelectValue placeholder="Choose your goal" /></SelectTrigger>
+                <SelectContent><SelectGroup>{intentOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
+              {intent ? <span className="font-normal text-muted-foreground">{intentOptions.find((option) => option.value === intent)?.description}</span> : null}
+            </label>
+            <label className="flex flex-col gap-2 text-sm font-medium">
+              Where are you today?
+              <Select items={stageOptions} value={stage} onValueChange={(value) => setStage(value as GoalStage)}>
+                <SelectTrigger className="w-full" aria-label="Current stage"><SelectValue placeholder="Choose your stage" /></SelectTrigger>
+                <SelectContent><SelectGroup>{stageOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectGroup></SelectContent>
+              </Select>
+            </label>
+          </CardContent>
+          <CardFooter className="justify-between gap-4"><p className="text-sm text-muted-foreground">You can update this later.</p><Button disabled={saving} onClick={() => void selectIntent()}>Continue <ArrowRight data-icon="inline-end" /></Button></CardFooter>
+        </Card>
+      ) : null}
+
+      {step === "resume" ? (
+        <Card>
+          <CardHeader><CardTitle>Start with your resume</CardTitle><CardDescription>We’ll use it to prefill the factual parts of your job profile. Your answers in the next step stay editable.</CardDescription></CardHeader>
+          <CardContent>
+            <label className="flex cursor-pointer flex-col items-center gap-4 rounded-xl border border-dashed border-border p-10 text-center hover:bg-muted/40">
+              <FileText className="size-8 text-muted-foreground" />
+              <span className="font-medium">{extracting ? "Extracting your resume…" : "Choose a PDF resume"}</span>
+              <span className="text-sm text-muted-foreground">PDF only, up to 5 MiB. Five extraction attempts per 10 minutes.</span>
+              <input className="sr-only" type="file" accept="application/pdf" disabled={extracting} onChange={(event) => void uploadResume(event)} />
+            </label>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {currentSection && (step === "shared" || step === "intent_questions") ? (
+        <Card>
+          <CardHeader><CardTitle>{currentSection.title}</CardTitle><CardDescription>{currentSection.description} Answers save automatically.</CardDescription></CardHeader>
+          <CardContent className="flex flex-col gap-7">
+            {currentSection.questions.map((question) => (
+              <label key={question.id} htmlFor={question.id} className="flex flex-col gap-2 text-sm font-medium">
+                <span>{question.label}{question.required ? <span className="text-destructive"> *</span> : null}</span>
+                <Textarea id={question.id} value={answers[question.id] ?? ""} maxLength={question.maxLength} required={question.required} aria-required={question.required} onChange={(event) => { setAnswers((current) => ({ ...current, [question.id]: event.target.value })); setDirty(true); }} />
+                <span className="text-xs font-normal text-muted-foreground">{answers[question.id]?.length ?? 0}/{question.maxLength}</span>
+              </label>
+            ))}
+          </CardContent>
+          <CardFooter className="justify-between gap-4">
+            {step === "intent_questions" ? <Button variant="outline" disabled={saving} onClick={() => void goBack("shared")}><ArrowLeft data-icon="inline-start" /> Back</Button> : <span className="text-sm text-muted-foreground">{saving ? "Saving…" : dirty ? "Waiting to save…" : "Saved"}</span>}
+            <Button disabled={saving} onClick={() => void advanceQuestions(currentSection, step === "shared" ? "intent_questions" : "review")}>Continue <ArrowRight data-icon="inline-end" /></Button>
+          </CardFooter>
+        </Card>
+      ) : null}
+
+      {step === "review" ? (
+        <Card>
+          <CardHeader><CardTitle>How we understand you</CardTitle><CardDescription>Edit this summary until it is accurate. It will guide matching and outreach; your original answers remain unchanged.</CardDescription></CardHeader>
+          <CardContent><label htmlFor="profile-summary" className="flex flex-col gap-2 text-sm font-medium">Profile summary<Textarea id="profile-summary" className="min-h-44" value={summary} maxLength={1200} onChange={(event) => setSummary(event.target.value)} /><span className="text-xs font-normal text-muted-foreground">{summary.length}/1200</span></label></CardContent>
+          <CardFooter className="justify-between gap-4"><Button variant="outline" disabled={saving} onClick={() => void goBack("intent_questions")}><ArrowLeft data-icon="inline-start" /> Back</Button><Button disabled={saving || !summary.trim()} onClick={() => void finish()}><Check data-icon="inline-start" /> Confirm profile</Button></CardFooter>
+        </Card>
+      ) : null}
+
+      {step === "complete" ? (
+        <Card>
+          <CardHeader><CardTitle>Your profile is ready</CardTitle><CardDescription>Your goal and answers are saved separately, so this profile can support more purposes later.</CardDescription></CardHeader>
+          <CardContent><p className="leading-7 text-foreground">{state.goal?.summary}</p></CardContent>
+          <CardFooter className="justify-end"><Button onClick={() => router.push("/")}>Explore founders <ArrowRight data-icon="inline-end" /></Button></CardFooter>
+        </Card>
+      ) : null}
+
+      {message ? <p role="status" className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">{message}</p> : null}
+    </main>
   );
 }

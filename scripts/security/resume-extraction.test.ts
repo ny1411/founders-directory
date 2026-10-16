@@ -57,6 +57,32 @@ test('valid PDF verifies identity, reserves allowance, then calls the model and 
   assert.deepEqual(events, ['verify:valid', 'reserve:verified-user', 'model:%PDF-1.7\nfixture']);
 });
 
+test('successful extraction can persist typed source data for the verified owner', async () => {
+  const writes: unknown[][] = [];
+  const handler = createResumeExtractionHandler({
+    verifyToken: async () => ({ uid: 'verified-user' }),
+    reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+    extract: async () => JSON.stringify({ name: 'Candidate', skills: ['TypeScript'] }),
+    persist: async (...args) => { writes.push(args); },
+  });
+  assert.equal((await handler(upload())).status, 200);
+  assert.deepEqual(writes, [['verified-user', { name: 'Candidate', skills: ['TypeScript'] }]]);
+});
+
+test('non-job profiles are rejected before the upload body or paid model is read', async () => {
+  let modelCalls = 0;
+  const handler = createResumeExtractionHandler({
+    verifyToken: async () => ({ uid: 'verified-user' }),
+    authorizeUpload: async () => false,
+    reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+    extract: async () => { modelCalls++; return '{}'; },
+  });
+  const request = upload();
+  assert.equal((await handler(request)).status, 409);
+  assert.equal(request.bodyUsed, false);
+  assert.equal(modelCalls, 0);
+});
+
 test('declared oversized body rejects before it is read', async () => {
   const { handler, events } = setup();
   const request = upload();

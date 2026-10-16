@@ -41,7 +41,7 @@ export default function LoginPage() {
     <div className="flex items-center justify-center min-h-[60vh]">
       <div className="w-full max-w-md p-8 bg-card border border-border rounded-2xl shadow-sm text-center">
         <h1 className="text-3xl font-serif text-foreground mb-2">Welcome Back</h1>
-        <p className="text-secondary-foreground mb-8">Sign in to access your custom cold DMs</p>
+        <p className="text-secondary-foreground mb-8">Sign in to build your profile and create purposeful introductions</p>
         
         {error && <div role="alert" className="text-red-500 mb-4 text-sm">{error}</div>}
 

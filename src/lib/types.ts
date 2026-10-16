@@ -52,3 +52,16 @@ export interface GeneratedMessage {
   createdAt: string;
   updatedAt: string;
 }
+
+export type {
+  GoalStage,
+  OnboardingAccount,
+  OnboardingState,
+  OnboardingStep,
+  ProfileSource,
+  QuestionnaireQuestion,
+  QuestionnaireSection,
+  ReusableProfile,
+  UserGoal,
+  UserIntent,
+} from './onboarding/types';
