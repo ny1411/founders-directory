@@ -166,7 +166,7 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
             {twitterUrl && (
               <button 
                 onClick={() => handleSend(twitterUrl)} 
-                className={buttonVariants({ variant: "default", className: "gap-2 bg-black hover:bg-black/80 text-black" })}
+                className={buttonVariants({ variant: null, className: "gap-2 bg-black text-white hover:bg-black/80" })}
               >
                 Send via X
                 <ExternalLink className="w-4 h-4" />
