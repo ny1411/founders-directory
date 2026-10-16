@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { OnboardingForm } from "@/components/onboarding/onboarding-form";
 import { useAuth } from "@/context/AuthContext";
 import { auth } from "@/lib/firebase";
-import type { OnboardingState } from "@/lib/onboarding/types";
+import {
+  ProfileRequestError,
+  readOnboardingResponse,
+} from "@/lib/profile-load";
 
 export default function ProfilePage() {
   const { user, loading } = useAuth();
@@ -18,7 +21,15 @@ export default function ProfilePage() {
   const request = useCallback(
     async (method: "GET" | "POST", body?: Record<string, unknown>) => {
       if (!user) throw new Error("Sign in again to load your profile.");
-      const token = await user.getIdToken();
+      let token: string;
+      try {
+        token = await user.getIdToken();
+      } catch {
+        throw new ProfileRequestError(
+          "Sign in again to load your profile.",
+          "auth-error",
+        );
+      }
       const response = await fetch("/api/onboarding", {
         method,
         headers: {
@@ -28,10 +39,7 @@ export default function ProfilePage() {
         ...(body ? { body: JSON.stringify(body) } : {}),
         cache: "no-store",
       });
-      const payload = await response.json();
-      if (!response.ok)
-        throw new Error(payload.error || "Unable to save your profile.");
-      return payload as OnboardingState;
+      return readOnboardingResponse(response);
     },
     [user],
   );

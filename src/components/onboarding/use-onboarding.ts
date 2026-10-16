@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QUESTIONNAIRE_VERSION } from "@/lib/onboarding/questionnaires";
 import type { OnboardingState } from "@/lib/onboarding/types";
+import { ProfileRequestError, type ProfileLoadState } from "@/lib/profile-load";
 
 export type OnboardingRequest = (
   method: "GET" | "POST",
@@ -20,6 +21,7 @@ export function useOnboarding(request: OnboardingRequest) {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("Loading…");
   const [editRevision, setEditRevision] = useState(0);
+  const [loadState, setLoadState] = useState<ProfileLoadState>("loading");
   const current = useRef<OnboardingState | null>(null);
   const draft = useRef<Record<string, string>>({});
   const saved = useRef<Record<string, string>>({});
@@ -37,12 +39,17 @@ export function useOnboarding(request: OnboardingRequest) {
     setSummary(summaryDraft.current);
     setStatus("All changes saved");
     setError("");
+    setLoadState("ready");
   }, []);
 
   const load = useCallback(async () => {
+    setLoadState("loading");
     try {
       apply(await request("GET"));
     } catch (reason) {
+      setLoadState(
+        reason instanceof ProfileRequestError ? reason.state : "backend-error",
+      );
       setError(
         reason instanceof Error
           ? reason.message
@@ -58,12 +65,18 @@ export function useOnboarding(request: OnboardingRequest) {
         if (active) apply(next);
       })
       .catch((reason) => {
-        if (active)
+        if (active) {
+          setLoadState(
+            reason instanceof ProfileRequestError
+              ? reason.state
+              : "backend-error",
+          );
           setError(
             reason instanceof Error
               ? reason.message
               : "Unable to load your profile.",
           );
+        }
       });
     return () => {
       active = false;
@@ -131,6 +144,11 @@ export function useOnboarding(request: OnboardingRequest) {
         setError("");
       } catch (reason) {
         setStatus("Changes not saved");
+        if (
+          reason instanceof ProfileRequestError &&
+          reason.state === "auth-error"
+        )
+          setLoadState("auth-error");
         setError(
           reason instanceof Error
             ? reason.message
@@ -188,6 +206,7 @@ export function useOnboarding(request: OnboardingRequest) {
 
   return {
     state,
+    loadState,
     answers,
     summary,
     status,

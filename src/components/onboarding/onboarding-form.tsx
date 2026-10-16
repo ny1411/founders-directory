@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { ProfileLoadPanel } from "@/components/profile-load-panel";
 import {
   getIntentQuestionnaire,
   sharedQuestionnaire,
@@ -107,21 +108,15 @@ export function OnboardingForm({ request, upload, onExit, onLogout }: Props) {
       );
     });
 
-  if (!form.state)
+  if (!form.state || form.loadState === "auth-error")
     return (
-      <div
-        className="mx-auto flex max-w-xl flex-col gap-4 px-4 py-16"
-        role="status"
-      >
-        <p>{form.error || "Loading your profile…"}</p>
-        {form.error ? (
-          <>
-            <Button onClick={() => void form.load()}>Try again</Button>
-            <Button variant="outline" onClick={() => void onLogout()}>
-              Sign in again
-            </Button>
-          </>
-        ) : null}
+      <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6">
+        <ProfileLoadPanel
+          state={form.loadState}
+          isRecoveringSession={busy}
+          onRetry={() => void form.load()}
+          onRecoverSession={() => void run(onLogout)}
+        />
       </div>
     );
 

@@ -39,10 +39,11 @@ test(
       stdin: {
         contents: `import React from "react"; import { createRoot } from "react-dom/client";
       import { OnboardingForm } from "./src/components/onboarding/onboarding-form";
+      import { readOnboardingResponse } from "./src/lib/profile-load";
       const uid = new URLSearchParams(location.search).get("uid");
       const request = async (method, body) => {
         const response = await fetch("/api/onboarding", {method, headers:{authorization:"Bearer " + uid,"content-type":"application/json"}, ...(body ? {body:JSON.stringify(body)} : {})});
-        const data = await response.json(); if(!response.ok) throw new Error(data.error); return data;
+        return readOnboardingResponse(response);
       };
       const upload = async (file) => { const form=new FormData(); form.append("file",file);
         const response=await fetch("/api/extract-resume",{method:"POST",headers:{authorization:"Bearer " + uid},body:form});
@@ -232,13 +233,11 @@ test(
                 .getByText("Start with your resume", { exact: true })
                 .waitFor();
               assert.equal(await page.locator("#about").count(), 0);
-              await page
-                .getByLabel("Choose a PDF resume")
-                .setInputFiles({
-                  name: "resume.pdf",
-                  mimeType: "application/pdf",
-                  buffer: Buffer.from("%PDF-1.7\nBrowser fixture"),
-                });
+              await page.getByLabel("Choose a PDF resume").setInputFiles({
+                name: "resume.pdf",
+                mimeType: "application/pdf",
+                buffer: Buffer.from("%PDF-1.7\nBrowser fixture"),
+              });
               await page.locator("#about").waitFor();
               assert.match(
                 await page.locator("#links").inputValue(),
