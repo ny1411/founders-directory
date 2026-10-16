@@ -1,161 +1,401 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { DecodedIdToken } from "firebase-admin/auth";
-import type { Firestore } from "firebase-admin/firestore";
-
-import { createOnboardingHandler } from "./handler";
-import { getIntentQuestionnaire, getQuestionMap, QUESTIONNAIRE_VERSION, sharedQuestionnaire } from "./questionnaires";
+import {
+  fixture,
+  MemoryFirestore,
+  resumeFixture,
+} from "../../../scripts/onboarding/fixture";
+import {
+  getIntentQuestionnaire,
+  getQuestionMap,
+  QUESTIONNAIRE_VERSION,
+  sharedQuestionnaire,
+} from "./questionnaires";
 import { getOnboardingReadiness } from "./readiness";
-import { profilePrefillFromResume } from "./resume";
-import { OnboardingStore } from "./store";
-import type { GoalStage, OnboardingState, OnboardingStep, UserIntent } from "./types";
-import { OnboardingValidationError, validateAnswers, validateQuestionnaireVersion, validateRequiredAnswers } from "./validation";
+import { parseResumeData, resumePrefill } from "./resume";
+import { INTENTS, type UserIntent } from "./types";
+import { OnboardingValidationError, validateAnswers } from "./validation";
 
-const now = "2026-10-16T00:00:00.000Z";
-
-function state(intent: UserIntent = "sell_services", step: OnboardingStep = "shared"): OnboardingState {
-  return {
-    account: { onboardingStatus: step === "complete" ? "complete" : "in_progress", activeGoalId: "primary" },
-    profile: { answers: {}, hasResume: intent === "job" && step !== "resume", version: 1, updatedAt: now },
-    goal: {
-      id: "primary", type: intent, stage: "actively_looking", status: step === "complete" ? "active" : "draft",
-      currentStep: step, answers: {}, questionnaireVersion: QUESTIONNAIRE_VERSION,
-      createdAt: now, updatedAt: now,
-    },
+test("all four questionnaires retain the complete requested question sets", () => {
+  const counts = {
+    job: 19,
+    sell_services: 19,
+    find_cofounder: 23,
+    raise_capital: 24,
   };
-}
-
-test("questionnaires expose stable, unique textual questions for every supported intent", () => {
   assert.equal(sharedQuestionnaire.questions.length, 8);
-  const expectedCounts: Record<UserIntent, number> = { job: 19, sell_services: 19, find_cofounder: 23, raise_capital: 24 };
-  for (const [intent, expected] of Object.entries(expectedCounts) as Array<[UserIntent, number]>) {
+  for (const intent of INTENTS) {
     const section = getIntentQuestionnaire(intent);
-    assert.equal(section.questions.length, expected);
-    assert.equal(new Set(section.questions.map((question) => question.id)).size, expected);
-    assert.ok(section.questions.every((question) => question.input === "textarea"));
-    assert.equal(getQuestionMap(intent).size, expected + sharedQuestionnaire.questions.length);
+    assert.equal(section.questions.length, counts[intent]);
+    assert.equal(getQuestionMap(intent).size, counts[intent] + 8);
+    assert.ok(section.questions.every((q) => q.input === "textarea"));
   }
 });
 
-test("answer validation splits reusable profile and goal answers and rejects untrusted keys", () => {
-  assert.deepEqual(validateAnswers("job", { about: " Builder ", desired_role: "Engineer" }), {
-    profile: { about: "Builder" }, goal: { desired_role: "Engineer" },
+test("normal resume URLs and long prefills remain valid questionnaire answers", () => {
+  const data = parseResumeData({
+    ...resumeFixture,
+    skills: Array.from({ length: 100 }, () => "Postgres".repeat(10)),
   });
-  assert.throws(() => validateAnswers("job", { administrator: true }), OnboardingValidationError);
-  assert.throws(() => validateAnswers("job", { about: "x".repeat(1201) }), OnboardingValidationError);
-  assert.throws(() => validateQuestionnaireVersion(QUESTIONNAIRE_VERSION + 1), OnboardingValidationError);
+  const { profile, goal } = resumePrefill(data);
+  assert.doesNotThrow(() => validateAnswers("job", { ...profile, ...goal }));
+  assert.equal(
+    profile.links,
+    "https://github.com/example\nhttps://linkedin.com/in/example",
+  );
+  assert.match(goal.relevant_experience, /Cut invoice processing time by 40%/);
+  assert.match(goal.representative_projects, /50 teams/);
 });
 
-test("required-answer and readiness checks are intent aware", () => {
-  const service = state("sell_services", "review");
-  assert.equal(getOnboardingReadiness(service).reason, "answers_required");
-  assert.throws(() => validateRequiredAnswers("sell_services", {}), /Missing required answers/);
-
-  const job = state("job", "shared");
-  job.profile.hasResume = false;
-  assert.equal(getOnboardingReadiness(job).reason, "resume_required");
-  const cofounder = state("find_cofounder", "shared");
-  assert.notEqual(getOnboardingReadiness(cofounder).reason, "resume_required");
-});
-
-test("resume prefill extracts reusable facts without inventing intent answers", () => {
-  const prefill = profilePrefillFromResume({
-    location: "Bengaluru", skills: ["TypeScript", "Postgres"],
-    links: [{ label: "GitHub", url: "https://github.com/example" }],
-  });
-  assert.equal(prefill.answers?.location_timezone, "Bengaluru");
-  assert.match(prefill.answers?.strengths ?? "", /TypeScript/);
-  assert.equal("desired_role" in (prefill.answers ?? {}), false);
-});
-
-class FakeStore {
-  current = state();
-  calls: Array<[string, ...unknown[]]> = [];
-  async load(uid: string) { this.calls.push(["load", uid]); return this.current; }
-  async selectIntent(uid: string, intent: UserIntent, stage: GoalStage) {
-    this.calls.push(["select", uid, intent, stage]); this.current = state(intent, intent === "job" ? "resume" : "shared"); return this.current;
+test("resume schema rejects empty/malformed extractions and normalizes legacy bullets", () => {
+  for (const input of [
+    {},
+    [],
+    { skills: 42 },
+    { name: "Ada", workExperience: "wrong shape" },
+    { name: "Ada", links: [{ url: "javascript:alert(1)" }] },
+  ]) {
+    assert.throws(() => parseResumeData(input));
   }
-  async saveAnswers(uid: string, current: OnboardingState, profile: Record<string, string>, goal: Record<string, string>) {
-    this.calls.push(["answers", uid, profile, goal]);
-    this.current = { ...current, profile: { ...current.profile, answers: { ...current.profile.answers, ...profile } }, goal: current.goal ? { ...current.goal, answers: { ...current.goal.answers, ...goal } } : null };
-  }
-  async setStep(uid: string, goalId: string, step: OnboardingStep) { this.calls.push(["step", uid, goalId, step]); if (this.current.goal) this.current.goal.currentStep = step; }
-  async saveSummary(uid: string, goalId: string, summary: string) { this.calls.push(["summary", uid, goalId, summary]); if (this.current.goal) this.current.goal.summary = summary; }
-  async complete(uid: string, goalId: string) { this.calls.push(["complete", uid, goalId]); if (this.current.goal) this.current.goal.currentStep = "complete"; }
+  assert.deepEqual(
+    parseResumeData({
+      name: "Ada",
+      projects: [{ name: "Ledger", description: [{ point: "Shipped" }] }],
+    }).projects?.[0].description,
+    ["Shipped"],
+  );
+});
+
+export function required(intent: UserIntent, scope: "profile" | "goal") {
+  return Object.fromEntries(
+    [...getQuestionMap(intent).values()]
+      .filter((q) => q.scope === scope && q.required)
+      .map((q) => [q.id, `${q.id} evidence`]),
+  );
 }
 
-function request(body?: unknown, token = "valid") {
-  return new Request("http://localhost/api/onboarding", {
-    method: body ? "POST" : "GET",
-    headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
-    ...(body ? { body: JSON.stringify(body) } : {}),
+async function must(response: Promise<Response>, status = 200) {
+  const result = await response;
+  const data = await result.json();
+  assert.equal(result.status, status, JSON.stringify(data));
+  return data;
+}
+
+for (const intent of INTENTS) {
+  test(`${intent}: real handlers and persistence complete, resume, review, and edit the full flow`, async () => {
+    const f = fixture(intent);
+    let state = await must(
+      f.post({ action: "select_intent", intent, stage: "actively_looking" }),
+    );
+    assert.equal(
+      state.goal.currentStep,
+      intent === "job" ? "resume" : "shared",
+    );
+    if (intent === "job") {
+      await must(f.post({ action: "set_step", step: "shared" }), 400);
+      await must(
+        f.post({
+          action: "save_answers",
+          answers: { about: "Cannot skip resume" },
+        }),
+        400,
+      );
+      await f.store.saveResume(f.uid, resumeFixture, "a".repeat(64));
+      const source = f.memory.records.get(
+        `users/${f.uid}/sources/resume-${"a".repeat(64)}`,
+      )!;
+      assert.equal(source.consentBasis, "upload");
+      assert.ok(source.consentAt);
+      assert.equal(source.rawFileRetention, "not_stored");
+      assert.equal(source.model, "gemini-3.5-flash");
+    }
+    await must(
+      f.post({ action: "save_answers", answers: required(intent, "profile") }),
+    );
+    await must(f.post({ action: "set_step", step: "intent_questions" }));
+    await must(
+      f.post({ action: "save_answers", answers: required(intent, "goal") }),
+    );
+    state = await must(f.post({ action: "set_step", step: "review" }));
+    assert.ok(state.goal.summary);
+    assert.equal(getOnboardingReadiness(state).ready, false);
+    await must(
+      f.post({
+        action: "save_summary",
+        summary: "An accurate, edited profile summary.",
+      }),
+    );
+    state = await must(f.post({ action: "complete" }));
+    assert.equal(state.readiness.ready, true);
+    const reloaded = await f.state();
+    assert.equal(
+      reloaded.goal?.summary,
+      "An accurate, edited profile summary.",
+    );
+    assert.equal(getOnboardingReadiness(reloaded).ready, true);
+    assert.equal("resumeData" in state.profile, false);
+    // A completed profile can be edited through the typed profile endpoint.
+    state = await must(
+      f.post(
+        { answers: { about: "Updated reusable profile" } },
+        undefined,
+        true,
+      ),
+    );
+    assert.equal(state.goal.currentStep, "review");
+    assert.equal(state.readiness.ready, false);
+    assert.equal(state.goal.summaryConfirmed, false);
+    await must(
+      f.post({
+        action: "save_summary",
+        summary: "Reconfirmed updated profile.",
+      }),
+    );
+    assert.equal(
+      (await must(f.post({ action: "complete" }))).readiness.ready,
+      true,
+    );
   });
 }
 
-test("onboarding handler authenticates and branches job seekers through resume first", async () => {
-  const store = new FakeStore();
-  const verify = async (token: string, revoked?: boolean) => {
-    assert.equal(token, "valid"); assert.equal(revoked, true); return { uid: "user-1" } as DecodedIdToken;
-  };
-  const handler = createOnboardingHandler(verify, store);
-  const response = await handler.POST(request({ action: "select_intent", intent: "job", stage: "actively_looking" }));
-  assert.equal(response.status, 200);
-  const payload = await response.json();
-  assert.equal(payload.goal.currentStep, "resume");
-  assert.equal("resumeData" in payload.profile, false, "raw resume extraction must not be returned");
-  assert.equal(payload.profile.hasResume, false);
-  assert.deepEqual(store.calls[0], ["select", "user-1", "job", "actively_looking"]);
-});
-
-test("onboarding handler rejects unknown answers without writes", async () => {
-  const store = new FakeStore();
-  const handler = createOnboardingHandler(async () => ({ uid: "user-1" }) as DecodedIdToken, store);
-  const response = await handler.POST(request({ action: "save_answers", questionnaireVersion: QUESTIONNAIRE_VERSION, answers: { unexpected: "value" } }));
-  assert.equal(response.status, 400);
-  assert.match((await response.json()).error, /Unknown question/);
-  assert.deepEqual(store.calls, [["load", "user-1"]]);
-});
-
-test("onboarding handler turns rejected credentials into 401 without database access", async () => {
-  const store = new FakeStore();
-  const handler = createOnboardingHandler(async () => { throw new Error("private auth diagnostic"); }, store);
-  const response = await handler.GET(request());
-  assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), { error: "Unauthorized" });
-  assert.deepEqual(store.calls, []);
-});
-
-test("legacy resumeText is migrated into a job goal, reusable profile, and source", async () => {
-  const records = new Map<string, Record<string, unknown>>([
-    ["users/user-1", { resumeText: JSON.stringify({ name: "Ada", location: "London", skills: ["Systems"] }) }],
+test("stale versions and simultaneous writes cannot overwrite a newer profile", async () => {
+  const f = fixture();
+  await must(
+    f.post({
+      action: "select_intent",
+      intent: "sell_services",
+      stage: "exploring",
+    }),
+  );
+  const snapshot = await f.state();
+  const results = await Promise.all([
+    f.post(
+      { action: "save_answers", answers: { about: "First edit" } },
+      snapshot,
+    ),
+    f.post(
+      { action: "save_answers", answers: { about: "Stale edit" } },
+      snapshot,
+    ),
   ]);
-  const reference = (path: string): Record<string, unknown> => ({
-    path,
-    get: async () => ({ exists: records.has(path), id: path.split("/").at(-1), data: () => records.get(path) }),
-    set: async (data: Record<string, unknown>, options?: { merge?: boolean }) => {
-      records.set(path, options?.merge ? { ...records.get(path), ...data } : data);
-    },
-    collection: (name: string) => ({ doc: (id: string) => reference(`${path}/${name}/${id}`) }),
-  });
-  const db = {
-    collection: (name: string) => ({ doc: (id: string) => reference(`${name}/${id}`) }),
-    batch: () => {
-      const writes: Array<() => Promise<void>> = [];
-      return {
-        set: (ref: { set: (data: Record<string, unknown>, options?: { merge?: boolean }) => Promise<void> }, data: Record<string, unknown>, options?: { merge?: boolean }) => {
-          writes.push(() => ref.set(data, options));
-        },
-        commit: async () => { await Promise.all(writes.map((write) => write())); },
-      };
-    },
-  } as unknown as Firestore;
+  assert.deepEqual(
+    results.map((r) => r.status),
+    [200, 409],
+  );
+  assert.equal((await f.state()).profile.answers.about, "First edit");
+});
 
-  const migrated = await new OnboardingStore(db, () => now).load("user-1");
-  assert.equal(migrated.goal?.type, "job");
-  assert.equal(migrated.goal?.currentStep, "shared");
-  assert.equal(migrated.profile.answers.location_timezone, "London");
-  assert.equal(migrated.profile.hasResume, true);
-  assert.equal(migrated.profile.resumeData, undefined, "raw extraction belongs only in the source document");
-  assert.deepEqual(records.get("users/user-1/sources/resume-current")?.type, "legacy_resume");
-  assert.equal(records.get("users/user-1")?.resumeText !== undefined, true, "legacy data remains during transition");
+test("stage transitions, unconfirmed summaries, and outdated questionnaires fail closed", async () => {
+  const f = fixture();
+  await must(
+    f.post({
+      action: "select_intent",
+      intent: "sell_services",
+      stage: "exploring",
+    }),
+  );
+  await must(f.post({ action: "set_step", step: "review" }), 400);
+  await must(f.post({ action: "save_summary", summary: "Skip review" }), 400);
+  await must(f.post({ action: "complete" }), 400);
+  const goal = f.memory.records.get(`users/${f.uid}/goals/goal-sell_services`)!;
+  goal.questionnaireVersion = QUESTIONNAIRE_VERSION - 1;
+  await must(f.post({ action: "complete" }), 400);
+  assert.equal(getOnboardingReadiness(await f.state()).ready, false);
+});
+
+test("changing goals preserves old answers and switching back restores them", async () => {
+  const f = fixture();
+  await must(
+    f.post({
+      action: "select_intent",
+      intent: "sell_services",
+      stage: "exploring",
+    }),
+  );
+  await must(
+    f.post({
+      action: "save_answers",
+      answers: { about: "Builder", service: "Lifecycle marketing" },
+    }),
+  );
+  await must(
+    f.post({
+      action: "select_intent",
+      intent: "find_cofounder",
+      stage: "actively_looking",
+    }),
+  );
+  assert.equal(
+    f.memory.records.get(`users/${f.uid}/goals/goal-sell_services`)?.status,
+    "archived",
+  );
+  await must(
+    f.post({
+      action: "save_answers",
+      answers: {
+        building: "An accounting tool",
+        about: "Builder with a new direction",
+      },
+    }),
+  );
+  const restored = await must(
+    f.post({
+      action: "select_intent",
+      intent: "sell_services",
+      stage: "ready_to_talk",
+    }),
+  );
+  assert.equal(restored.goal.answers.service, "Lifecycle marketing");
+  assert.equal(restored.profile.answers.about, "Builder with a new direction");
+  assert.match(restored.goal.summary, /Builder with a new direction/);
+  assert.equal(
+    f.memory.records.get(`users/${f.uid}/goals/goal-find_cofounder`)?.answers
+      .building,
+    "An accounting tool",
+  );
+});
+
+test("legacy migration is transactional, retains the original, and prefills job questions", async () => {
+  const memory = new MemoryFirestore();
+  memory.records.set("users/legacy", {
+    resumeText: JSON.stringify(resumeFixture),
+  });
+  const f = fixture("legacy", memory);
+  await Promise.all([f.state(), f.state()]);
+  const state = await f.state();
+  assert.equal(state.goal?.currentStep, "shared");
+  assert.match(state.goal?.answers.relevant_experience ?? "", /40%/);
+  assert.equal(state.profile.version, 1);
+  assert.equal(state.profile.resumeData, undefined);
+  assert.ok(memory.records.get("users/legacy")?.resumeText);
+  const source = memory.records.get(
+    `users/legacy/sources/${state.profile.resumeSourceId}`,
+  )!;
+  assert.equal(
+    source.consentAt,
+    null,
+    "migration must not invent upload consent",
+  );
+});
+
+test("repeat resume imports are idempotent and preserve explicit answer edits", async () => {
+  const f = fixture();
+  await must(
+    f.post({ action: "select_intent", intent: "job", stage: "exploring" }),
+  );
+  await f.store.saveResume(f.uid, resumeFixture, "b".repeat(64));
+  await must(
+    f.post({
+      action: "save_answers",
+      answers: { relevant_experience: "My own account of the work." },
+    }),
+  );
+  const version = (await f.state()).profile.version;
+  await f.store.saveResume(f.uid, resumeFixture, "b".repeat(64));
+  const state = await f.state();
+  assert.equal(
+    state.goal?.answers.relevant_experience,
+    "My own account of the work.",
+  );
+  assert.equal(state.profile.version, version);
+  assert.equal(
+    [...f.memory.records.keys()].filter((path) => path.includes("/sources/"))
+      .length,
+    1,
+  );
+  await f.store.saveResume(
+    f.uid,
+    { ...resumeFixture, skills: ["Rust"] },
+    "c".repeat(64),
+  );
+  const replaced = await f.state();
+  assert.equal(
+    replaced.profile.answers.strengths,
+    "Rust",
+    "replace prior automatic prefills",
+  );
+  assert.equal(
+    replaced.goal?.answers.relevant_experience,
+    "My own account of the work.",
+    "retain user-authored answers",
+  );
+});
+
+test("a malformed source from the first release returns job onboarding to resume upload", async () => {
+  const memory = new MemoryFirestore();
+  memory.records.set("users/old-release", {
+    activeGoalId: "primary",
+    onboardingStatus: "complete",
+  });
+  memory.records.set("users/old-release/profiles/default", {
+    answers: {},
+    hasResume: true,
+    version: 1,
+  });
+  memory.records.set("users/old-release/goals/primary", {
+    id: "primary",
+    type: "job",
+    stage: "exploring",
+    status: "active",
+    currentStep: "complete",
+    answers: {},
+    questionnaireVersion: 1,
+    summaryConfirmed: true,
+    summary: "Old summary",
+  });
+  memory.records.set("users/old-release/sources/resume-current", {
+    extractedData: {},
+  });
+  const f = fixture("old-release", memory);
+  const state = await f.state();
+  assert.equal(state.goal?.currentStep, "resume");
+  assert.equal(state.profile.hasResume, false);
+  assert.equal(getOnboardingReadiness(state).ready, false);
+  await f.store.saveResume(f.uid, resumeFixture);
+  assert.equal((await f.state()).goal?.currentStep, "shared");
+});
+
+test("profile API rejects goal data and legacy resumeText writes; validation covers unsafe inputs", async () => {
+  const f = fixture();
+  await must(
+    f.post({
+      action: "select_intent",
+      intent: "sell_services",
+      stage: "exploring",
+    }),
+  );
+  for (const answers of [
+    { unknown: "x" },
+    { about: 42 },
+    { about: "x".repeat(1201) },
+    { links: "javascript:alert(1)" },
+  ]) {
+    await must(f.post({ action: "save_answers", answers }), 400);
+  }
+  await must(
+    f.post({ answers: { service: "Should be goal only" } }, undefined, true),
+    400,
+  );
+  await must(
+    f.post({ resumeText: "must not write this" }, undefined, true),
+    400,
+  );
+  assert.throws(
+    () => validateAnswers("job", { links: "https://name:secret@example.com" }),
+    OnboardingValidationError,
+  );
+});
+
+test("missing and rejected credentials do not read the body or touch private persistence", async () => {
+  const f = fixture();
+  for (const authorization of ["", "Bearer invalid"]) {
+    const request = new Request("http://localhost/api/onboarding", {
+      method: "POST",
+      headers: { authorization },
+      body: "{}",
+    });
+    assert.equal((await f.handlers.POST(request)).status, 401);
+    assert.equal(request.bodyUsed, false);
+    assert.equal(f.memory.writes, 0);
+  }
 });

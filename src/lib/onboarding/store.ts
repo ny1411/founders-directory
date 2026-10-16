@@ -1,24 +1,46 @@
-import type { Firestore } from "firebase-admin/firestore";
-import { QUESTIONNAIRE_VERSION } from "./questionnaires";
-import { parseResumeData, profilePrefillFromResume } from "./resume";
-import type { GoalStage, OnboardingState, OnboardingStep, ReusableProfile, UserGoal, UserIntent } from "./types";
+import { createHash } from "node:crypto";
+import type { Firestore, Transaction } from "firebase-admin/firestore";
+import { OnboardingConflictError, OnboardingValidationError } from "./errors";
+import { QUESTIONNAIRE_VERSION, sharedQuestionnaire } from "./questionnaires";
+import {
+  parseResumeData,
+  RESUME_MODEL,
+  RESUME_SCHEMA_VERSION,
+  resumePrefill,
+} from "./resume";
+import { buildProfileSummary } from "./summary";
+import {
+  validateAnswers,
+  validateQuestionnaireVersion,
+  validateRequiredAnswers,
+} from "./validation";
+import type {
+  GoalStage,
+  OnboardingState,
+  OnboardingStep,
+  ProfileSource,
+  ResumeData,
+  UserGoal,
+  UserIntent,
+} from "./types";
 
-export const PRIMARY_GOAL_ID = "primary";
-const PROFILE_ID = "default";
+export const PRIMARY_GOAL_ID = "primary"; // Read compatibility for the first onboarding release.
 
-function emptyProfile(now: string): ReusableProfile {
-  return { answers: {}, hasResume: false, version: 1, updatedAt: now };
-}
-
-function newGoal(type: UserIntent, stage: GoalStage, now: string): UserGoal {
+function newGoal(
+  id: string,
+  type: UserIntent,
+  stage: GoalStage,
+  now: string,
+): UserGoal {
   return {
-    id: PRIMARY_GOAL_ID,
+    id,
     type,
     stage,
     status: "draft",
     currentStep: type === "job" ? "resume" : "shared",
     answers: {},
     questionnaireVersion: QUESTIONNAIRE_VERSION,
+    revision: 0,
     summaryConfirmed: false,
     createdAt: now,
     updatedAt: now,
@@ -26,132 +48,514 @@ function newGoal(type: UserIntent, stage: GoalStage, now: string): UserGoal {
 }
 
 export class OnboardingStore {
-  constructor(private readonly db: Firestore, private readonly clock = () => new Date().toISOString()) {}
+  constructor(
+    private readonly db: Firestore,
+    private readonly clock = () => new Date().toISOString(),
+  ) {}
 
   private refs(uid: string, goalId = PRIMARY_GOAL_ID) {
     const user = this.db.collection("users").doc(uid);
     return {
       user,
-      profile: user.collection("profiles").doc(PROFILE_ID),
+      profile: user.collection("profiles").doc("default"),
       goal: user.collection("goals").doc(goalId),
-      source: user.collection("sources").doc("resume-current"),
     };
+  }
+
+  private source(
+    data: ResumeData,
+    type: ProfileSource["type"],
+    now: string,
+    pdfHash?: string,
+  ) {
+    const contentHash =
+      pdfHash ||
+      createHash("sha256").update(JSON.stringify(data)).digest("hex");
+    const source: ProfileSource = {
+      type,
+      status: "ready",
+      extractedData: data,
+      contentHash,
+      schemaVersion: RESUME_SCHEMA_VERSION,
+      model: type === "legacy_resume" ? "legacy_unknown" : RESUME_MODEL,
+      consentBasis: type === "legacy_resume" ? "legacy_migration" : "upload",
+      consentAt: type === "legacy_resume" ? null : now,
+      rawFileRetention: "not_stored",
+      importedAt: now,
+      updatedAt: now,
+    };
+    return { id: `resume-${contentHash}`, source };
   }
 
   async load(uid: string): Promise<OnboardingState> {
-    const now = this.clock();
-    const refs = this.refs(uid);
-    const [userSnapshot, profileSnapshot] = await Promise.all([refs.user.get(), refs.profile.get()]);
-    const userData = userSnapshot.data() ?? {};
-    let activeGoalId = typeof userData.activeGoalId === "string" ? userData.activeGoalId : null;
-    let profile = profileSnapshot.exists
-      ? ({ answers: {}, hasResume: false, ...profileSnapshot.data() } as ReusableProfile)
-      : emptyProfile(now);
-    let goal: UserGoal | null = null;
-
-    if (activeGoalId) {
-      const goalSnapshot = await this.refs(uid, activeGoalId).goal.get();
-      goal = goalSnapshot.exists ? ({ id: goalSnapshot.id, ...goalSnapshot.data() } as UserGoal) : null;
-      if (!goal) activeGoalId = null;
-    }
-
-    if (!goal && typeof userData.resumeText === "string" && userData.resumeText.trim()) {
-      let resumeData: Record<string, unknown> | null = null;
-      try { resumeData = parseResumeData(JSON.parse(userData.resumeText)); } catch { /* prompt for a fresh upload */ }
-      const prefill = resumeData ? profilePrefillFromResume(resumeData) : {};
-      profile = {
-        ...profile,
-        ...prefill,
-        answers: { ...(prefill.answers ?? {}), ...(profile.answers ?? {}) },
-        version: profile.version || 1,
+    return this.db.runTransaction(async (transaction) => {
+      const now = this.clock();
+      const refs = this.refs(uid);
+      const [userDocument, profileDocument] = await Promise.all([
+        transaction.get(refs.user),
+        transaction.get(refs.profile),
+      ]);
+      const user = userDocument.data() ?? {};
+      const profile = {
+        answers: {},
+        hasResume: false,
+        version: 0,
         updatedAt: now,
-      };
-      goal = newGoal("job", "actively_looking", now);
-      goal.currentStep = resumeData ? "shared" : "resume";
-      activeGoalId = PRIMARY_GOAL_ID;
-      const batch = this.db.batch();
-      batch.set(refs.user, { activeGoalId, onboardingStatus: "in_progress", updatedAt: now }, { merge: true });
-      batch.set(refs.profile, profile, { merge: true });
-      batch.set(refs.goal, goal, { merge: true });
-      if (resumeData) {
-        batch.set(refs.source, {
-          type: "legacy_resume", status: "ready", extractedData: resumeData,
-          schemaVersion: 1, importedAt: now, updatedAt: now,
-        }, { merge: true });
+        ...profileDocument.data(),
+      } as OnboardingState["profile"];
+      let goal: UserGoal | null = null;
+      if (typeof user.activeGoalId === "string") {
+        const snapshot = await transaction.get(
+          this.refs(uid, user.activeGoalId).goal,
+        );
+        if (snapshot.exists)
+          goal = {
+            revision: 0,
+            ...snapshot.data(),
+            id: snapshot.id,
+          } as UserGoal;
       }
-      await batch.commit();
-    }
 
-    return {
-      account: {
-        onboardingStatus: userData.onboardingStatus === "complete" ? "complete" : goal ? "in_progress" : "new",
-        activeGoalId,
-      },
-      profile,
-      goal,
-    };
+      let imported: ResumeData | null = null;
+      let migrating = false;
+      if (
+        !goal &&
+        typeof user.resumeText === "string" &&
+        user.resumeText.trim()
+      ) {
+        try {
+          imported = parseResumeData(JSON.parse(user.resumeText));
+        } catch {
+          /* Keep legacy data; request a new PDF. */
+        }
+        goal = newGoal(PRIMARY_GOAL_ID, "job", "actively_looking", now);
+        migrating = true;
+      } else if (profile.hasResume && !profile.resumeSourceId) {
+        const oldSource = await transaction.get(
+          refs.user.collection("sources").doc("resume-current"),
+        );
+        try {
+          imported = parseResumeData(
+            oldSource.data()?.extractedData || profile.resumeData,
+          );
+        } catch {
+          profile.hasResume = false;
+        }
+        migrating = true;
+      }
+
+      if (
+        goal?.currentStep === "complete" &&
+        (!goal.summaryConfirmed ||
+          goal.confirmedProfileVersion !== profile.version)
+      ) {
+        goal.currentStep =
+          goal.type === "job" && !profile.hasResume ? "resume" : "review";
+        goal.status = "draft";
+        goal.summaryConfirmed = false;
+        migrating = true;
+      }
+
+      if (migrating && goal) {
+        if (imported) {
+          const { id, source } = this.source(imported, "legacy_resume", now);
+          const prefill = resumePrefill(imported);
+          profile.answers = { ...prefill.profile, ...profile.answers };
+          // Repair invalid links generated by the first release, without replacing valid user edits.
+          try {
+            validateAnswers(goal.type, { links: profile.answers.links || "" });
+          } catch {
+            profile.answers.links = prefill.profile.links || "";
+          }
+          if (goal.type === "job")
+            goal.answers = { ...prefill.goal, ...goal.answers };
+          Object.assign(profile, {
+            hasResume: true,
+            resumeSourceId: id,
+            resumeHash: source.contentHash,
+          });
+          transaction.set(refs.user.collection("sources").doc(id), source);
+        }
+        if (goal.currentStep === "resume" && profile.hasResume)
+          goal.currentStep = "shared";
+        if (goal.type === "job" && !profile.hasResume)
+          goal.currentStep = "resume";
+        profile.version += 1;
+        profile.updatedAt = now;
+        delete profile.resumeData;
+        goal.summary = buildProfileSummary({
+          account: { activeGoalId: goal.id, onboardingStatus: "in_progress" },
+          profile,
+          goal,
+        });
+        goal.summaryProfileVersion = profile.version;
+        transaction.set(refs.profile, profile);
+        transaction.set(this.refs(uid, goal.id).goal, goal);
+        transaction.set(
+          refs.user,
+          {
+            activeGoalId: goal.id,
+            onboardingStatus: "in_progress",
+            updatedAt: now,
+          },
+          { merge: true },
+        );
+      }
+
+      return {
+        account: {
+          onboardingStatus:
+            goal?.currentStep === "complete"
+              ? "complete"
+              : goal
+                ? "in_progress"
+                : "new",
+          activeGoalId: goal?.id ?? null,
+        },
+        profile,
+        goal,
+      };
+    });
   }
 
-  async selectIntent(uid: string, type: UserIntent, stage: GoalStage) {
-    const now = this.clock();
-    const refs = this.refs(uid);
-    const goal = newGoal(type, stage, now);
-    const batch = this.db.batch();
-    batch.set(refs.user, { activeGoalId: PRIMARY_GOAL_ID, onboardingStatus: "in_progress", updatedAt: now }, { merge: true });
-    batch.set(refs.goal, goal);
-    await batch.commit();
+  async selectIntent(
+    uid: string,
+    type: UserIntent,
+    stage: GoalStage,
+    expectedGoalId: string | null,
+  ) {
+    await this.load(uid); // Finish legacy migration before selecting a different intent.
+    await this.db.runTransaction(async (transaction) => {
+      const now = this.clock();
+      const refs = this.refs(uid);
+      const [user, profile] = await Promise.all([
+        transaction.get(refs.user),
+        transaction.get(refs.profile),
+      ]);
+      const activeId = user.data()?.activeGoalId ?? null;
+      if (activeId !== expectedGoalId)
+        throw new OnboardingConflictError(
+          "Your active goal changed. Reload before continuing.",
+        );
+      const old = activeId
+        ? await transaction.get(this.refs(uid, activeId).goal)
+        : null;
+      const id = old?.data()?.type === type ? activeId : `goal-${type}`;
+      const nextRef = this.refs(uid, id).goal;
+      const previous = id === activeId ? old : await transaction.get(nextRef);
+      const goal = previous?.exists
+        ? ({ revision: 0, ...previous.data(), id } as UserGoal)
+        : newGoal(id, type, stage, now);
+      if (old?.exists && id !== activeId)
+        transaction.set(
+          this.refs(uid, activeId).goal,
+          { status: "archived", updatedAt: now },
+          { merge: true },
+        );
+      if (
+        goal.questionnaireVersion !== QUESTIONNAIRE_VERSION ||
+        goal.confirmedProfileVersion !== (profile.data()?.version ?? 0)
+      ) {
+        goal.currentStep =
+          type === "job" && !profile.data()?.hasResume ? "resume" : "shared";
+        goal.summaryConfirmed = false;
+      }
+      goal.status = goal.currentStep === "complete" ? "active" : "draft";
+      goal.stage = stage;
+      goal.questionnaireVersion = QUESTIONNAIRE_VERSION;
+      const currentProfile = {
+        answers: {},
+        version: 0,
+        updatedAt: now,
+        ...profile.data(),
+      } as OnboardingState["profile"];
+      if (goal.summaryProfileVersion !== currentProfile.version) {
+        goal.summary = buildProfileSummary({
+          account: { activeGoalId: id, onboardingStatus: "in_progress" },
+          profile: currentProfile,
+          goal,
+        });
+        goal.summaryProfileVersion = currentProfile.version;
+      }
+      goal.revision = (goal.revision ?? 0) + 1;
+      goal.updatedAt = now;
+      transaction.set(nextRef, goal);
+      transaction.set(
+        refs.user,
+        {
+          activeGoalId: id,
+          onboardingStatus:
+            goal.currentStep === "complete" ? "complete" : "in_progress",
+          updatedAt: now,
+        },
+        { merge: true },
+      );
+    });
     return this.load(uid);
   }
 
-  async saveAnswers(uid: string, state: OnboardingState, profileAnswers: Record<string, string>, goalAnswers: Record<string, string>) {
-    if (!state.goal) throw new Error("Goal not found");
-    const now = this.clock();
-    const refs = this.refs(uid, state.goal.id);
-    const batch = this.db.batch();
-    batch.set(refs.profile, {
-      answers: { ...state.profile.answers, ...profileAnswers },
-      version: (state.profile.version || 0) + 1,
-      updatedAt: now,
-    }, { merge: true });
-    batch.set(refs.goal, { answers: { ...state.goal.answers, ...goalAnswers }, updatedAt: now }, { merge: true });
-    await batch.commit();
+  private async mutate(
+    uid: string,
+    expected: OnboardingState,
+    update: (state: OnboardingState, transaction: Transaction) => void,
+  ) {
+    if (!expected.goal)
+      throw new OnboardingValidationError("Choose an intent first.");
+    const expectedGoal = expected.goal;
+    await this.db.runTransaction(async (transaction) => {
+      const refs = this.refs(uid, expectedGoal.id);
+      const [user, profileDoc, goalDoc] = await Promise.all([
+        transaction.get(refs.user),
+        transaction.get(refs.profile),
+        transaction.get(refs.goal),
+      ]);
+      const profile = {
+        answers: {},
+        hasResume: false,
+        version: 0,
+        updatedAt: this.clock(),
+        ...profileDoc.data(),
+      } as OnboardingState["profile"];
+      const goal = {
+        revision: 0,
+        ...goalDoc.data(),
+        id: goalDoc.id,
+      } as UserGoal;
+      if (
+        user.data()?.activeGoalId !== expectedGoal.id ||
+        !goalDoc.exists ||
+        profile.version !== expected.profile.version ||
+        goal.revision !== (expectedGoal.revision ?? 0)
+      ) {
+        throw new OnboardingConflictError(
+          "This profile changed in another tab. Reload the latest saved answers before continuing.",
+        );
+      }
+      validateQuestionnaireVersion(goal.questionnaireVersion);
+      const current: OnboardingState = {
+        account: expected.account,
+        profile,
+        goal,
+      };
+      update(current, transaction);
+      goal.revision = (goal.revision ?? 0) + 1;
+      goal.updatedAt = this.clock();
+      transaction.set(refs.profile, profile);
+      transaction.set(refs.goal, goal);
+      transaction.set(
+        refs.user,
+        {
+          onboardingStatus:
+            goal.currentStep === "complete" ? "complete" : "in_progress",
+          updatedAt: this.clock(),
+        },
+        { merge: true },
+      );
+    });
   }
 
-  async setStep(uid: string, goalId: string, currentStep: OnboardingStep) {
-    await this.refs(uid, goalId).goal.set({ currentStep, updatedAt: this.clock() }, { merge: true });
+  async saveAnswers(
+    uid: string,
+    state: OnboardingState,
+    profileAnswers: Record<string, string>,
+    goalAnswers: Record<string, string>,
+  ) {
+    await this.mutate(uid, state, (current) => {
+      if (
+        current.goal!.currentStep === "resume" ||
+        (current.goal!.type === "job" && !current.profile.hasResume)
+      )
+        throw new OnboardingValidationError(
+          "Upload a resume before answering questions.",
+        );
+      const changed =
+        Object.entries(profileAnswers).some(
+          ([id, value]) => current.profile.answers[id] !== value,
+        ) ||
+        Object.entries(goalAnswers).some(
+          ([id, value]) => current.goal!.answers[id] !== value,
+        );
+      if (!changed) return;
+      current.profile.answers = {
+        ...current.profile.answers,
+        ...profileAnswers,
+      };
+      current.goal!.answers = { ...current.goal!.answers, ...goalAnswers };
+      current.profile.version += 1;
+      current.profile.updatedAt = this.clock();
+      current.goal!.summary = buildProfileSummary(current);
+      current.goal!.summaryProfileVersion = current.profile.version;
+      current.goal!.summaryConfirmed = false;
+      current.goal!.status = "draft";
+      if (current.goal!.currentStep === "complete")
+        current.goal!.currentStep = "review";
+    });
   }
 
-  async saveSummary(uid: string, goalId: string, summary: string) {
-    await this.refs(uid, goalId).goal.set({ summary, summaryConfirmed: false, updatedAt: this.clock() }, { merge: true });
+  async setStep(uid: string, state: OnboardingState, step: OnboardingStep) {
+    await this.mutate(uid, state, (current) => {
+      const goal = current.goal!;
+      const paths: Record<OnboardingStep, OnboardingStep[]> = {
+        intent: [],
+        resume: ["resume", "shared"],
+        shared: ["shared", "intent_questions", "resume"],
+        intent_questions: ["shared", "intent_questions", "review", "resume"],
+        review: ["shared", "intent_questions", "review", "resume"],
+        complete: ["shared", "review", "resume"],
+      };
+      if (!paths[goal.currentStep]?.includes(step))
+        throw new OnboardingValidationError(
+          "Complete the previous onboarding stage first.",
+        );
+      if (step === "resume" && goal.type !== "job")
+        throw new OnboardingValidationError(
+          "Only job profiles require a resume.",
+        );
+      if (
+        step !== "resume" &&
+        goal.type === "job" &&
+        !current.profile.hasResume
+      )
+        throw new OnboardingValidationError(
+          "Upload a resume before continuing.",
+        );
+      const answers = { ...current.profile.answers, ...goal.answers };
+      if (
+        step === "intent_questions" &&
+        sharedQuestionnaire.questions.some(
+          (q) => q.required && !answers[q.id]?.trim(),
+        )
+      )
+        throw new OnboardingValidationError(
+          "Complete the required profile questions first.",
+        );
+      if (step === "review") validateRequiredAnswers(goal.type, answers);
+      goal.currentStep = step;
+      goal.status = "draft";
+      goal.summaryConfirmed = false;
+      if (
+        !goal.summary ||
+        goal.summaryProfileVersion !== current.profile.version
+      ) {
+        goal.summary = buildProfileSummary(current);
+        goal.summaryProfileVersion = current.profile.version;
+      }
+    });
   }
 
-  async complete(uid: string, goalId: string) {
-    const now = this.clock();
-    const refs = this.refs(uid, goalId);
-    const batch = this.db.batch();
-    batch.set(refs.goal, { currentStep: "complete", status: "active", summaryConfirmed: true, updatedAt: now }, { merge: true });
-    batch.set(refs.user, { onboardingStatus: "complete", updatedAt: now }, { merge: true });
-    await batch.commit();
+  async saveSummary(uid: string, state: OnboardingState, summary: string) {
+    await this.mutate(uid, state, (current) => {
+      if (current.goal!.currentStep !== "review")
+        throw new OnboardingValidationError(
+          "Enter the review stage before editing your summary.",
+        );
+      current.goal!.summary = summary;
+      current.goal!.summaryProfileVersion = current.profile.version;
+      current.goal!.summaryConfirmed = false;
+    });
   }
 
-  async saveResume(uid: string, data: Record<string, unknown>) {
+  async complete(uid: string, state: OnboardingState) {
+    await this.mutate(uid, state, (current) => {
+      const goal = current.goal!;
+      if (goal.currentStep !== "review")
+        throw new OnboardingValidationError(
+          "Review your profile before confirming it.",
+        );
+      validateRequiredAnswers(goal.type, {
+        ...current.profile.answers,
+        ...goal.answers,
+      });
+      if (goal.type === "job" && !current.profile.hasResume)
+        throw new OnboardingValidationError(
+          "Upload a resume before continuing.",
+        );
+      if (!goal.summary?.trim())
+        throw new OnboardingValidationError(
+          "Add a summary before confirming your profile.",
+        );
+      if (goal.summaryProfileVersion !== current.profile.version)
+        throw new OnboardingValidationError(
+          "Review the summary for your latest profile before confirming.",
+        );
+      goal.currentStep = "complete";
+      goal.status = "active";
+      goal.summaryConfirmed = true;
+      goal.confirmedProfileVersion = current.profile.version;
+    });
+  }
+
+  async saveResume(
+    uid: string,
+    value: Record<string, unknown>,
+    pdfHash?: string,
+  ) {
+    const data = parseResumeData(value);
     const state = await this.load(uid);
-    if (!state.goal || state.goal.type !== "job") throw new Error("A job-search goal is required");
-    const now = this.clock();
-    const prefill = profilePrefillFromResume(data);
-    const refs = this.refs(uid, state.goal.id);
-    const batch = this.db.batch();
-    batch.set(refs.source, {
-      type: "resume_pdf", status: "ready", extractedData: data,
-      schemaVersion: 1, importedAt: now, updatedAt: now,
-    }, { merge: true });
-    batch.set(refs.profile, {
-      hasResume: true,
-      answers: { ...(prefill.answers ?? {}), ...state.profile.answers },
-      version: (state.profile.version || 0) + 1,
-      updatedAt: now,
-    }, { merge: true });
-    batch.set(refs.goal, { currentStep: "shared", updatedAt: now }, { merge: true });
-    await batch.commit();
+    if (state.goal?.type !== "job")
+      throw new OnboardingValidationError("A job-search goal is required.");
+    const previous = await this.getResumeContext(uid, state);
+    const previousPrefill = previous
+      ? resumePrefill(previous)
+      : { profile: {}, goal: {} };
+    const mergePrefill = (
+      answers: Record<string, string>,
+      before: Record<string, string>,
+      after: Record<string, string>,
+    ) => {
+      const merged = { ...answers };
+      for (const id of new Set([
+        ...Object.keys(before),
+        ...Object.keys(after),
+      ])) {
+        if (!(id in answers) || answers[id] === before[id])
+          merged[id] = after[id] ?? "";
+      }
+      return merged;
+    };
+    await this.mutate(uid, state, (current, transaction) => {
+      const now = this.clock();
+      const { id, source } = this.source(data, "resume_pdf", now, pdfHash);
+      const prefill = resumePrefill(data);
+      const sameSource = current.profile.resumeSourceId === id;
+      transaction.set(
+        this.refs(uid).user.collection("sources").doc(id),
+        source,
+        { merge: true },
+      );
+      current.profile.answers = mergePrefill(
+        current.profile.answers,
+        previousPrefill.profile,
+        prefill.profile,
+      );
+      current.profile.hasResume = true;
+      current.profile.resumeSourceId = id;
+      current.profile.resumeHash = source.contentHash;
+      if (!sameSource) current.profile.version += 1;
+      current.profile.updatedAt = now;
+      current.goal!.answers = mergePrefill(
+        current.goal!.answers,
+        previousPrefill.goal,
+        prefill.goal,
+      );
+      current.goal!.currentStep = "shared";
+      current.goal!.status = "draft";
+      current.goal!.summaryConfirmed = false;
+      current.goal!.summary = buildProfileSummary(current);
+      current.goal!.summaryProfileVersion = current.profile.version;
+    });
+  }
+
+  async getResumeContext(
+    uid: string,
+    state: OnboardingState,
+  ): Promise<ResumeData | null> {
+    if (state.goal?.type !== "job" || !state.profile.resumeSourceId)
+      return null;
+    const source = await this.refs(uid)
+      .user.collection("sources")
+      .doc(state.profile.resumeSourceId)
+      .get();
+    return source.exists ? parseResumeData(source.data()?.extractedData) : null;
   }
 }

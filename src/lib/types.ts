@@ -39,7 +39,10 @@ export interface User {
   id: string;
   firebaseId: string;
   email: string;
-  resumeText: string | null;
+  /** @deprecated Read only during migration to profile sources. */
+  resumeText?: string | null;
+  activeGoalId?: string | null;
+  onboardingStatus?: "new" | "in_progress" | "complete";
   createdAt: string;
   updatedAt: string;
 }
@@ -48,6 +51,15 @@ export interface GeneratedMessage {
   id: string;
   userId: string;
   founderId: string;
+  goalId: string;
+  purpose: import('./onboarding/types').UserIntent;
+  profileVersion: number;
+  goalRevision: number;
+  questionnaireVersion: number;
+  playbookVersion: number;
+  resumeHash: string;
+  channel: "direct_message";
+  action: "introduction";
   content: string;
   createdAt: string;
   updatedAt: string;

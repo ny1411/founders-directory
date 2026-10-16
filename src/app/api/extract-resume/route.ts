@@ -37,9 +37,9 @@ Structure the JSON as follows:
       "role": "Job Title",
       "duration": "Start Date - End Date",
       "description": [
-        {"Point 1"},
-        {"Point 2"},
-        {"Point 3"}
+        "Point 1",
+        "Point 2",
+        "Point 3"
       ],
       "url": "Link to Internship Certificates if any"
     }
@@ -48,9 +48,9 @@ Structure the JSON as follows:
     {
       "name": "Project Name",
       "description": [
-        {"Point 1"},
-        {"Point 2"},
-        {"Point 3"}
+        "Point 1",
+        "Point 2",
+        "Point 3"
       ],
       "url": "Link to project if any"
     }
@@ -69,9 +69,9 @@ Structure the JSON as follows:
         "name": "Hackathon Name",
         "duration": "Start Date - End Date",
         "description": [
-          {"Point 1"},
-          {"Point 2"},
-          {"Point 3"}
+          "Point 1",
+          "Point 2",
+          "Point 3"
         ],
         "url": "Link to project/certificates if any"
       }
@@ -81,9 +81,9 @@ Structure the JSON as follows:
         "name": "Contributing Organization Name",
         "duration": "Start Date - End Date",
         "description": [
-          {"Point 1"},
-          {"Point 2"},
-          {"Point 3"}
+          "Point 1",
+          "Point 2",
+          "Point 3"
         ],
         "url": "Link to PRs/badges if any"
       }
@@ -93,9 +93,9 @@ Structure the JSON as follows:
         "name": "Competition Name",
         "duration": "Start Date - End Date",
         "description": [
-          {"Point 1"},
-          {"Point 2"},
-          {"Point 3"}
+          "Point 1",
+          "Point 2",
+          "Point 3"
         ],
         "url": "Link to certificates if any"
       }
@@ -105,9 +105,9 @@ Structure the JSON as follows:
         "name": "Extracurricular Name",
         "duration": "Start Date - End Date",
         "description": [
-          {"Point 1"},
-          {"Point 2"},
-          {"Point 3"}
+          "Point 1",
+          "Point 2",
+          "Point 3"
         ],
         "url": "Link to certificates/work if any"
       }
@@ -142,5 +142,5 @@ Structure the JSON as follows:
     if (!response.text) throw new Error('Empty extraction response');
     return response.text;
   },
-  persist: (uid, parsed) => onboardingStore.saveResume(uid, parsed),
+  persist: (uid, parsed, hash) => onboardingStore.saveResume(uid, parsed, hash),
 });
