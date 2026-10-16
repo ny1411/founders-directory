@@ -67,7 +67,10 @@ test('unauthorized responses render session recovery without profile editing con
     onRecoverSession: () => { recoveryCalls += 1; },
   });
   const nodes = elements(tree);
-  assert.ok(nodes.some(node => node.props.role === 'alert'));
+  const alert = nodes.find(node => node.props.role === 'alert');
+  assert.ok(alert);
+  assert.match(String(alert.props.className), /border-border/);
+  assert.doesNotMatch(String(alert.props.className), /border-destructive/);
   assert.match(textContent(tree), /Your session has expired/);
   assert.match(textContent(tree), /Sign in again/);
   assert.doesNotMatch(textContent(tree), /Upload Resume|Save Profile/);
@@ -90,13 +93,19 @@ test('server errors and invalid success payloads render a retry without profile 
     onRecoverSession: handlers.onRecoverSession,
   });
   const nodes = elements(tree);
-  assert.ok(nodes.some(node => node.props.role === 'alert'));
+  const alert = nodes.find(node => node.props.role === 'alert');
+  assert.ok(alert);
+  assert.match(String(alert.props.className), /border-border/);
+  assert.doesNotMatch(String(alert.props.className), /border-destructive/);
   assert.match(textContent(tree), /We couldn't load your profile/);
   assert.match(textContent(tree), /Try again/);
   assert.match(textContent(tree), /saved profile is still safe/);
   assert.doesNotMatch(textContent(tree), /Upload Resume|Save Profile/);
   const retryButton = nodes.find(node => node.type === 'button');
   assert.ok(retryButton);
+  assert.match(String(retryButton.props.className), /bg-red-600/);
+  assert.match(String(retryButton.props.className), /text-white/);
+  assert.match(String(retryButton.props.className), /hover:bg-red-700/);
   (retryButton.props.onClick as () => void)();
   assert.equal(retryCalls, 1);
 });

@@ -26,7 +26,7 @@ export function ProfileLoadPanel({
 
   if (state === 'auth-error') {
     return (
-      <div role="alert" className="bg-card border border-destructive/40 rounded-2xl p-8 text-center shadow-sm">
+      <div role="alert" className="bg-card border border-border rounded-2xl p-8 text-center shadow-sm">
         <h2 className="text-xl font-medium text-foreground">Your session has expired</h2>
         <p className="text-sm text-muted-foreground mt-2 mb-6">
           Sign in again to securely load your saved profile.
@@ -44,12 +44,18 @@ export function ProfileLoadPanel({
 
   if (state === 'backend-error') {
     return (
-      <div role="alert" className="bg-card border border-destructive/40 rounded-2xl p-8 text-center shadow-sm">
+      <div role="alert" className="bg-card border border-border rounded-2xl p-8 text-center shadow-sm">
         <h2 className="text-xl font-medium text-foreground">We couldn&apos;t load your profile</h2>
         <p className="text-sm text-muted-foreground mt-2 mb-6">
           Your saved profile is still safe. Check your connection and try again.
         </p>
-        <button onClick={onRetry} className={buttonVariants({ variant: 'default' })}>
+        <button
+          onClick={onRetry}
+          className={buttonVariants({
+            variant: null,
+            className: 'bg-red-600 text-white hover:bg-red-700',
+          })}
+        >
           Try again
         </button>
       </div>
