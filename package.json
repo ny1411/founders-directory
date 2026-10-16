@@ -10,7 +10,8 @@
     "scrape:yc": "tsx scripts/scraper/yc.ts",
     "test:scraper": "tsx --test scripts/scraper/*.test.ts",
     "test:filters": "tsx --test src/lib/*filter*.test.ts src/lib/company-pagination.test.ts src/lib/directory-query.test.ts",
-    "test:filters:e2e": "tsx --test scripts/directory/filters.e2e.test.ts"
+    "test:filters:e2e": "tsx --test scripts/directory/filters.e2e.test.ts",
+    "test:profile": "tsx --test scripts/profile-loading.test.tsx"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
