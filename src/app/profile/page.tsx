@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { buttonVariants } from '@/components/ui/button';
 import { auth } from '@/lib/firebase';
 import { MAX_RESUME_BYTES, RESUME_SIZE_ERROR, RESUME_TYPE_ERROR } from '@/lib/resume-upload';
+import { ProfileLoadPanel } from '@/components/profile-load-panel';
+import { readProfileResponse, type ProfileLoadState } from '@/lib/profile-load';
 
 interface Link { label: string; url: string; }
 interface WorkExperience { company: string; role: string; duration: string; description: string | string[] | Record<string, string>[]; url?: string; }
@@ -31,8 +33,6 @@ interface ResumeData {
     [key: string]: Extracurricular[] | undefined;
   };
 }
-
-type ProfileLoadState = 'loading' | 'ready' | 'empty' | 'auth-error' | 'backend-error';
 
 export default function ProfilePage() {
   const { user, loading } = useAuth();
@@ -76,40 +76,11 @@ export default function ProfilePage() {
         signal,
       });
 
-      if (res.status === 401 || res.status === 403) {
-        setProfileLoadState('auth-error');
-        return;
+      const result = await readProfileResponse(res);
+      if (result.state === 'ready') {
+        setResumeText(result.resumeText);
       }
-
-      if (res.status === 404) {
-        setProfileLoadState('empty');
-        return;
-      }
-
-      if (!res.ok) {
-        setProfileLoadState('backend-error');
-        return;
-      }
-
-      const data: unknown = await res.json();
-      if (!data || typeof data !== 'object' || !('resumeText' in data)) {
-        setProfileLoadState('backend-error');
-        return;
-      }
-
-      const { resumeText: savedResumeText } = data as { resumeText: unknown };
-      if (savedResumeText == null || savedResumeText === '') {
-        setProfileLoadState('empty');
-        return;
-      }
-
-      if (typeof savedResumeText !== 'string') {
-        setProfileLoadState('backend-error');
-        return;
-      }
-
-      setResumeText(savedResumeText);
-      setProfileLoadState('ready');
+      setProfileLoadState(result.state);
     } catch (error) {
       if (signal?.aborted) return;
       console.error('Failed to fetch profile', error);
@@ -251,52 +222,16 @@ export default function ProfilePage() {
     </div>
   );
 
-  if (profileLoadState === 'loading') {
+  if (profileLoadState === 'loading' || profileLoadState === 'auth-error' || profileLoadState === 'backend-error') {
     return (
       <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
         {profileHeader}
-        <div role="status" className="bg-card border border-border rounded-2xl p-8 text-center shadow-sm">
-          <p className="font-medium text-foreground">Loading your profile...</p>
-          <p className="text-sm text-muted-foreground mt-2">Checking for your saved resume.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (profileLoadState === 'auth-error') {
-    return (
-      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
-        {profileHeader}
-        <div role="alert" className="bg-card border border-destructive/40 rounded-2xl p-8 text-center shadow-sm">
-          <h2 className="text-xl font-medium text-foreground">Your session has expired</h2>
-          <p className="text-sm text-muted-foreground mt-2 mb-6">
-            Sign in again to securely load your saved profile.
-          </p>
-          <button
-            onClick={handleSessionRecovery}
-            disabled={isRecoveringSession}
-            className={buttonVariants({ variant: "default" })}
-          >
-            {isRecoveringSession ? 'Signing out...' : 'Sign in again'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (profileLoadState === 'backend-error') {
-    return (
-      <div className="max-w-4xl mx-auto py-12 px-4 sm:px-6">
-        {profileHeader}
-        <div role="alert" className="bg-card border border-destructive/40 rounded-2xl p-8 text-center shadow-sm">
-          <h2 className="text-xl font-medium text-foreground">We couldn&apos;t load your profile</h2>
-          <p className="text-sm text-muted-foreground mt-2 mb-6">
-            Your saved profile is still safe. Check your connection and try again.
-          </p>
-          <button onClick={() => void fetchProfile()} className={buttonVariants({ variant: "default" })}>
-            Try again
-          </button>
-        </div>
+        <ProfileLoadPanel
+          state={profileLoadState}
+          isRecoveringSession={isRecoveringSession}
+          onRetry={() => void fetchProfile()}
+          onRecoverSession={handleSessionRecovery}
+        />
       </div>
     );
   }
