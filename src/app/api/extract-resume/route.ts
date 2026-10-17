@@ -2,11 +2,14 @@ import { GoogleGenAI } from '@google/genai';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { createResumeExtractionHandler } from '@/lib/resume-extraction-handler';
 import { reserveResumeExtractionAttempt } from '@/lib/resume-extraction-usage';
+import { OnboardingStore } from '@/lib/onboarding/store';
 
 export const runtime = 'nodejs';
+const onboardingStore = new OnboardingStore(adminDb);
 
 export const POST = createResumeExtractionHandler({
   verifyToken: (token) => adminAuth.verifyIdToken(token, true),
+  authorizeUpload: async (uid) => (await onboardingStore.load(uid)).goal?.type === 'job',
   reserveAttempt: (uid) => reserveResumeExtractionAttempt(adminDb, uid),
   extract: async (buffer) => {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -34,9 +37,9 @@ Structure the JSON as follows:
       "role": "Job Title",
       "duration": "Start Date - End Date",
       "description": [
-        {"Point 1"},
-        {"Point 2"},
-        {"Point 3"}
+        "Point 1",
+        "Point 2",
+        "Point 3"
       ],
       "url": "Link to Internship Certificates if any"
     }
@@ -45,9 +48,9 @@ Structure the JSON as follows:
     {
       "name": "Project Name",
       "description": [
-        {"Point 1"},
-        {"Point 2"},
-        {"Point 3"}
+        "Point 1",
+        "Point 2",
+        "Point 3"
       ],
       "url": "Link to project if any"
     }
@@ -66,9 +69,9 @@ Structure the JSON as follows:
         "name": "Hackathon Name",
         "duration": "Start Date - End Date",
         "description": [
-          {"Point 1"},
-          {"Point 2"},
-          {"Point 3"}
+          "Point 1",
+          "Point 2",
+          "Point 3"
         ],
         "url": "Link to project/certificates if any"
       }
@@ -78,9 +81,9 @@ Structure the JSON as follows:
         "name": "Contributing Organization Name",
         "duration": "Start Date - End Date",
         "description": [
-          {"Point 1"},
-          {"Point 2"},
-          {"Point 3"}
+          "Point 1",
+          "Point 2",
+          "Point 3"
         ],
         "url": "Link to PRs/badges if any"
       }
@@ -90,9 +93,9 @@ Structure the JSON as follows:
         "name": "Competition Name",
         "duration": "Start Date - End Date",
         "description": [
-          {"Point 1"},
-          {"Point 2"},
-          {"Point 3"}
+          "Point 1",
+          "Point 2",
+          "Point 3"
         ],
         "url": "Link to certificates if any"
       }
@@ -102,9 +105,9 @@ Structure the JSON as follows:
         "name": "Extracurricular Name",
         "duration": "Start Date - End Date",
         "description": [
-          {"Point 1"},
-          {"Point 2"},
-          {"Point 3"}
+          "Point 1",
+          "Point 2",
+          "Point 3"
         ],
         "url": "Link to certificates/work if any"
       }
@@ -139,4 +142,5 @@ Structure the JSON as follows:
     if (!response.text) throw new Error('Empty extraction response');
     return response.text;
   },
+  persist: (uid, parsed, hash) => onboardingStore.saveResume(uid, parsed, hash),
 });

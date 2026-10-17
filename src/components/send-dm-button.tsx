@@ -30,14 +30,14 @@ export function SendDmButton({ founderId, founderName, companySlug, twitterUrl, 
     }
 
     try {
-      // Check if user has resume by calling our profile API
+      // Readiness is goal-aware: only the job flow requires a resume.
       const token = await user.getIdToken();
-      const res = await fetch('/api/profile', {
+      const res = await fetch('/api/onboarding', {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
       
-      if (!data.resumeText || data.resumeText.trim() === '') {
+      if (!res.ok || !data.readiness?.ready) {
         router.push('/profile');
         return;
       }

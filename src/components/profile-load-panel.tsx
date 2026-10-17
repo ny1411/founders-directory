@@ -19,7 +19,7 @@ export function ProfileLoadPanel({
     return (
       <div role="status" className="bg-card border border-border rounded-2xl p-8 text-center shadow-sm">
         <p className="font-medium text-foreground">Loading your profile...</p>
-        <p className="text-sm text-muted-foreground mt-2">Checking for your saved resume.</p>
+          <p className="text-sm text-muted-foreground mt-2">Checking your saved profile and onboarding progress.</p>
       </div>
     );
   }

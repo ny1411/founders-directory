@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import type { Firestore } from 'firebase-admin/firestore';
 import { createResumeExtractionHandler, MAX_RESUME_REQUEST_BYTES } from '../../src/lib/resume-extraction-handler';
@@ -49,12 +50,52 @@ test('missing or invalid credentials reject before reading the upload or calling
   }
 });
 
-test('valid PDF verifies identity, reserves allowance, then calls the model and preserves output contract', async () => {
+test('valid PDF verifies identity, reserves allowance, then returns schema-validated structured output', async () => {
   const { handler, events } = setup();
   const response = await handler(upload());
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { text: JSON.stringify({ name: 'Candidate' }, null, 2) });
+  assert.deepEqual(await response.json(), { resume: { name: 'Candidate' } });
   assert.deepEqual(events, ['verify:valid', 'reserve:verified-user', 'model:%PDF-1.7\nfixture']);
+});
+
+test('successful extraction can persist typed source data for the verified owner', async () => {
+  const writes: unknown[][] = [];
+  const handler = createResumeExtractionHandler({
+    verifyToken: async () => ({ uid: 'verified-user' }),
+    reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+    extract: async () => JSON.stringify({ name: 'Candidate', skills: ['TypeScript'] }),
+    persist: async (...args) => { writes.push(args); },
+  });
+  assert.equal((await handler(upload())).status, 200);
+  assert.deepEqual(writes, [['verified-user', { name: 'Candidate', skills: ['TypeScript'] }, createHash('sha256').update('%PDF-1.7\nfixture').digest('hex')]]);
+});
+
+test('malformed or empty model extractions are never persisted as usable resumes', async () => {
+  for (const value of [{}, { name: 'Ada', skills: 42 }, { name: 'Ada', projects: 'wrong shape' }]) {
+    let writes = 0;
+    const handler = createResumeExtractionHandler({
+      verifyToken: async () => ({ uid: 'verified-user' }),
+      reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+      extract: async () => JSON.stringify(value),
+      persist: async () => { writes++; },
+    });
+    assert.equal((await handler(upload())).status, 502);
+    assert.equal(writes, 0);
+  }
+});
+
+test('non-job profiles are rejected before the upload body or paid model is read', async () => {
+  let modelCalls = 0;
+  const handler = createResumeExtractionHandler({
+    verifyToken: async () => ({ uid: 'verified-user' }),
+    authorizeUpload: async () => false,
+    reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
+    extract: async () => { modelCalls++; return '{}'; },
+  });
+  const request = upload();
+  assert.equal((await handler(request)).status, 409);
+  assert.equal(request.bodyUsed, false);
+  assert.equal(modelCalls, 0);
 });
 
 test('declared oversized body rejects before it is read', async () => {

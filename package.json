@@ -10,6 +10,8 @@
     "scrape:yc": "tsx scripts/scraper/yc.ts",
     "test:scraper": "tsx --test scripts/scraper/*.test.ts",
     "test:filters": "tsx --test src/lib/*filter*.test.ts src/lib/company-pagination.test.ts src/lib/directory-query.test.ts",
+    "test:onboarding": "tsx --test src/lib/onboarding/*.test.ts",
+    "test:onboarding:browser": "tsx --test scripts/onboarding/*.browser.test.ts",
     "test:filters:e2e": "tsx --test scripts/directory/filters.e2e.test.ts",
     "test:profile": "tsx --test scripts/profile-loading.test.tsx"
   },
@@ -40,6 +42,7 @@
     "dotenv": "^17.4.2",
     "eslint": "^9.19.0",
     "eslint-config-next": "16.2.10",
+    "esbuild": "^0.28.1",
     "playwright": "^1.61.1",
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
