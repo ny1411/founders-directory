@@ -149,10 +149,15 @@ test('extracts actual founder data, retains zero employees, and uses stable logo
   assert.deepEqual(details.company.tags, ['AI']);
 });
 
-test('normalizes YC missing-image placeholders and uses a valid listing logo', () => {
+test('normalizes supported image URLs and uses a valid listing logo', () => {
   assert.equal(normalizeImageUrl('/company/thumb/missing.png'), null);
   assert.equal(normalizeImageUrl('https://www.ycombinator.com/company/thumb/missing.png?size=64'), null);
   assert.equal(normalizeImageUrl('  https://example.com/logo.png  '), 'https://example.com/logo.png');
+  assert.equal(normalizeImageUrl('/images/company-logo.png?size=64'), '/images/company-logo.png?size=64');
+  assert.equal(normalizeImageUrl('http://example.com/insecure-logo.png'), null);
+  assert.equal(normalizeImageUrl('//example.com/protocol-relative-logo.png'), null);
+  assert.equal(normalizeImageUrl('not-a-valid-image-url'), null);
+  assert.equal(normalizeImageUrl('javascript:alert(1)'), null);
 
   const listing = { ...company('a'), small_logo_thumb_url: 'https://example.com/listing.png' };
   const details = parseCompany(profile({
