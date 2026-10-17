@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ColdDmErrorPanel } from "../../components/cold-dm-error-panel";
 import type { Company, Founder } from "../types";
 import { fixture, resumeFixture } from "../../../scripts/onboarding/fixture";
 import { getQuestionMap } from "./questionnaires";
+import {
+  MessageGenerationError,
+  readMessageGenerationResponse,
+} from "./message-client";
 import {
   buildMessageInput,
   createMessageHandler,
@@ -19,6 +24,70 @@ const target = {
   } as Company,
   founder: { id: "founder", name: "Founder", companyId: "company" } as Founder,
 };
+
+type Element = { type: unknown; props: Record<string, unknown> };
+
+function elements(node: unknown): Element[] {
+  if (Array.isArray(node)) return node.flatMap(elements);
+  if (!node || typeof node !== "object" || !("props" in node)) return [];
+  const element = node as Element;
+  return [element, ...elements(element.props.children)];
+}
+
+function textContent(node: unknown): string {
+  return elements(node)
+    .flatMap((element) =>
+      Array.isArray(element.props.children)
+        ? element.props.children
+        : [element.props.children],
+    )
+    .filter((child) => typeof child === "string" || typeof child === "number")
+    .join(" ");
+}
+
+function request(authorization?: string) {
+  return new Request("http://localhost/api/generate-dm", {
+    method: "POST",
+    headers: {
+      ...(authorization ? { authorization } : {}),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ founderId: "founder", companySlug: "earlyco" }),
+  });
+}
+
+function authFixture(
+  verifyToken: (token: string, revoked: boolean) => Promise<{ uid: string }>,
+) {
+  const calls = {
+    verify: 0,
+    load: 0,
+    resume: 0,
+    target: 0,
+    cache: 0,
+    save: 0,
+    generate: 0,
+  };
+  const unexpected = (name: Exclude<keyof typeof calls, "verify">) => {
+    calls[name] += 1;
+    throw new Error(`Unexpected ${name} call`);
+  };
+  return {
+    calls,
+    handler: createMessageHandler({
+      verifyToken: async (token: string, revoked: boolean) => {
+        calls.verify += 1;
+        return verifyToken(token, revoked);
+      },
+      load: async () => unexpected("load"),
+      getResume: async () => unexpected("resume"),
+      getTarget: async () => unexpected("target"),
+      getCached: async () => unexpected("cache"),
+      save: async () => unexpected("save"),
+      generate: async () => unexpected("generate"),
+    }),
+  };
+}
 
 async function complete(f: ReturnType<typeof fixture>, intent: UserIntent) {
   assert.equal(
@@ -140,4 +209,102 @@ test("real goal flows generate and cache distinct messages, including full priva
     4,
     "unconfirmed edits never trigger paid generation",
   );
+});
+
+test("missing and malformed message credentials return 401 before verification or data work", async () => {
+  for (const authorization of [undefined, "", "Basic password", "Bearer", "Bearer one two"]) {
+    const f = authFixture(async () => ({ uid: "authenticated-user" }));
+    const response = await f.handler(request(authorization));
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "Unauthorized" });
+    assert.deepEqual(f.calls, { verify: 0, load: 0, resume: 0, target: 0, cache: 0, save: 0, generate: 0 });
+  }
+});
+
+test("invalid, expired, revoked, and disabled message credentials return 401 before data work", async () => {
+  for (const code of ["auth/argument-error", "auth/invalid-argument", "auth/invalid-id-token", "auth/id-token-expired", "auth/id-token-revoked", "auth/user-disabled", "auth/user-not-found"]) {
+    const f = authFixture(async (token, revoked) => {
+      assert.equal(token, "invalid-token");
+      assert.equal(revoked, true);
+      throw Object.assign(new Error("private Firebase diagnostic"), { code });
+    });
+    const response = await f.handler(request("Bearer invalid-token"));
+    assert.equal(response.status, 401, code);
+    assert.deepEqual(await response.json(), { error: "Unauthorized" });
+    assert.equal(f.calls.verify, 1);
+    assert.equal(f.calls.load, 0);
+    assert.equal(f.calls.target, 0);
+    assert.equal(f.calls.generate, 0);
+  }
+  const missingIdentity = authFixture(async () => ({ uid: "" }));
+  const response = await missingIdentity.handler(request("Bearer no-identity"));
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "Unauthorized" });
+  assert.equal(missingIdentity.calls.load, 0);
+});
+
+test("authentication infrastructure failures remain safe logged 5xx errors", async (t) => {
+  const logged: unknown[][] = [];
+  t.mock.method(console, "error", (...args: unknown[]) => logged.push(args));
+  const f = authFixture(async () => {
+    throw Object.assign(new Error("private Firebase infrastructure diagnostic"), { code: "auth/internal-error" });
+  });
+  const response = await f.handler(request("Bearer valid-shape"));
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "Unable to generate a message right now." });
+  assert.equal(f.calls.load, 0);
+  assert.equal(f.calls.target, 0);
+  assert.equal(f.calls.generate, 0);
+  assert.equal(logged.length, 1);
+  assert.match(String(logged[0][0]), /verify message generation session/);
+});
+
+test("unexpected data failures remain safe logged 5xx errors", async (t) => {
+  const logged: unknown[][] = [];
+  t.mock.method(console, "error", (...args: unknown[]) => logged.push(args));
+  const f = authFixture(async () => ({ uid: "authenticated-user" }));
+  const response = await f.handler(request("Bearer valid-token"));
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.deepEqual(body, { error: "Unable to generate a message right now." });
+  assert.equal(f.calls.load, 1);
+  assert.equal(f.calls.target, 0);
+  assert.equal(f.calls.generate, 0);
+  assert.equal(logged.length, 1);
+  assert.match(String(logged[0][0]), /generate message/);
+  assert.doesNotMatch(JSON.stringify(body), /Unexpected load/);
+});
+
+test("message clients classify session expiry and never display unsafe 5xx details", async () => {
+  await assert.rejects(
+    readMessageGenerationResponse(Response.json({ error: "Firebase token decoding failed: private diagnostic" }, { status: 401 })),
+    (error: unknown) => error instanceof MessageGenerationError && error.failure === "auth" && /session has expired/.test(error.message) && !/Firebase|private/.test(error.message),
+  );
+  await assert.rejects(
+    readMessageGenerationResponse(Response.json({ error: "Gemini provider key leaked in private diagnostic" }, { status: 500 })),
+    (error: unknown) => error instanceof MessageGenerationError && error.failure === "request" && /try again/.test(error.message) && !/Gemini|private/.test(error.message),
+  );
+  await assert.rejects(
+    readMessageGenerationResponse(Response.json({ error: "Review and complete your profile before generating a message." }, { status: 409 })),
+    { message: "Review and complete your profile before generating a message.", failure: "request" },
+  );
+  assert.equal(await readMessageGenerationResponse(Response.json({ dmText: "Hello" })), "Hello");
+});
+
+test("expired-session message UI exposes an actionable sign-in path", () => {
+  let recoveries = 0;
+  const tree = ColdDmErrorPanel({
+    failure: "auth",
+    message: "Your session has expired. Sign in again to create a custom message.",
+    recoveringSession: false,
+    onRecoverSession: () => { recoveries += 1; },
+  });
+  const nodes = elements(tree);
+  assert.ok(nodes.some((node) => node.props.role === "alert"));
+  assert.match(textContent(tree), /Your session has expired/);
+  assert.match(textContent(tree), /Sign in again/);
+  const button = nodes.find((node) => node.type === "button");
+  assert.ok(button);
+  (button.props.onClick as () => void)();
+  assert.equal(recoveries, 1);
 });

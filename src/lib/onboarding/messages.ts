@@ -4,6 +4,33 @@ import type { OnboardingState, ResumeData, UserIntent } from "./types";
 import { getOnboardingReadiness } from "./readiness";
 
 export const PLAYBOOK_VERSION = 2;
+const rejectedCredentialCodes = new Set([
+  "auth/argument-error",
+  "auth/invalid-argument",
+  "auth/invalid-id-token",
+  "auth/id-token-expired",
+  "auth/id-token-revoked",
+  "auth/user-disabled",
+  "auth/user-not-found",
+]);
+
+function isRejectedCredential(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    rejectedCredentialCodes.has(error.code)
+  );
+}
+
+function serverFailure() {
+  return Response.json(
+    { error: "Unable to generate a message right now." },
+    { status: 500 },
+  );
+}
+
 const playbooks: Record<UserIntent, string> = {
   job: "Explore a job or internship. Connect relevant experience, shipped work, and the candidate’s startup motivation to the company. End with a conversation about a suitable role.",
   sell_services:
@@ -87,10 +114,13 @@ export function createMessageHandler(deps: Dependencies) {
     let uid: string;
     try {
       uid = (await deps.verifyToken(token, true)).uid;
-      if (!uid) throw new Error();
-    } catch {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    } catch (error) {
+      if (isRejectedCredential(error))
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      console.error("Unable to verify message generation session:", error);
+      return serverFailure();
     }
+    if (!uid) return Response.json({ error: "Unauthorized" }, { status: 401 });
     let input: Record<string, unknown>;
     try {
       const parsed: unknown = await request.json();
@@ -156,10 +186,7 @@ export function createMessageHandler(deps: Dependencies) {
       return Response.json({ dmText: content });
     } catch (error) {
       console.error("Unable to generate message:", error);
-      return Response.json(
-        { error: "Unable to generate a message right now." },
-        { status: 500 },
-      );
+      return serverFailure();
     }
   };
 }
