@@ -65,9 +65,6 @@ export const metadata: Metadata = {
   },
   alternates: {
     canonical: "/",
-    languages: {
-      "en-US": "/en-US",
-    },
   },
   verification: {
     google: "google-site-verification-id",
