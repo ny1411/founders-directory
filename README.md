@@ -4,7 +4,7 @@ Founders Directory is a premium, developer-focused platform designed to help you
 
 ## Key Features
 
-- **YC Startup Search**: Search for YCombinator startups by name or description. Filter results by VC Backer, Industry, Employees, Seed Rounds, and Raised amount.
+- **YC Startup Search**: Search for YCombinator startups by company name. Filter results by Industry, Employees, Batch, and VC Backer.
 - **Precision Founder Search**: Find and match with the exact founders you need based on their role or background.
 - **Comprehensive Social Data**: Get direct access to founders' social data (LinkedIn, X), cap tables, and detailed bios right from the company pages.
 - **Tailored User Profiles**: Create a profile and link/upload your resume to parse your professional background and experience.
@@ -69,6 +69,12 @@ requests fetch candidates using one field, then apply the remaining groups,
 alphabetical sorting, counts, and pagination on the server. This avoids requiring
 composite indexes for every combination, but reads the full candidate set. The
 unfiltered directory keeps its count and limited page queries.
+
+Company-name search is case-insensitive, collapses repeated whitespace, and also
+keeps the existing slug-prefix behavior. Search reads the current candidate set
+and applies sorting, counts, and pagination on the server, so it works for all
+existing company records without requiring a Firestore field migration or
+backfill. The search is name-only; descriptions are not searched.
 
 Run the regression tests with:
 

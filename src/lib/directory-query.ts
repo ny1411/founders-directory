@@ -11,6 +11,13 @@ import type { Company } from "./types"
  * This avoids Firestore compound indexes and multiple array-contains clauses.
  */
 export async function loadDirectoryCandidates(collection: CollectionReference, filters: DirectoryFilters): Promise<Company[]> {
+  if (!filters.batch.length && !filters.industry.length && !filters.employees.length && !filters.vc.length) {
+    const snapshot = await collection.get()
+    return snapshot.docs
+      .map(document => ({ ...document.data(), id: document.id } as Company))
+      .filter(company => matchesDirectoryFilters(company, filters))
+  }
+
   const [values, load] = filters.batch.length ? [filters.batch, loadBatchCandidates] :
     filters.industry.length ? [filters.industry, loadIndustryCandidates] :
       filters.employees.length ? [filters.employees, loadEmployeeCandidates] : [filters.vc, loadVcCandidates]
@@ -21,16 +28,12 @@ export async function loadDirectoryCandidates(collection: CollectionReference, f
 
 export async function loadDirectoryPage(collection: CollectionReference, filters: DirectoryFilters, requestedPage: number,
   cursor: [string, string] | null, direction: string, take = 10) {
-  if (filters.batch.length || filters.industry.length || filters.employees.length || filters.vc.length) {
+  if (filters.q || filters.batch.length || filters.industry.length || filters.employees.length || filters.vc.length) {
     return paginateCompanies(await loadDirectoryCandidates(collection, filters), requestedPage, filters.sort, take)
   }
 
   // Keep the unfiltered directory efficient: count plus one limited page query.
   let query: Query = collection
-  if (filters.q) {
-    const q = filters.q.toLowerCase()
-    query = query.where("slug", ">=", q).where("slug", "<=", q + "\uf8ff")
-  }
   const count = await query.count().get()
   const totalCount = count.data().count
   const totalPages = Math.ceil(totalCount / take)
