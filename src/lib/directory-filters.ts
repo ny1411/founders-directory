@@ -53,9 +53,21 @@ export function parseCursor(value: string | string[] | undefined): [string, stri
   }
 }
 
+/** Normalize human-entered company names without changing punctuation or word order. */
+export function normalizeCompanySearch(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US")
+}
+
+export function matchesCompanySearch(company: Pick<Company, "name" | "slug">, search: string): boolean {
+  const query = normalizeCompanySearch(search)
+  if (!query) return true
+
+  return normalizeCompanySearch(company.name ?? "").startsWith(query) ||
+    normalizeCompanySearch(company.slug ?? "").startsWith(query)
+}
+
 export function matchesDirectoryFilters(company: Company, filters: DirectoryFilters): boolean {
-  const q = filters.q.toLowerCase()
-  return (!q || (company.slug >= q && company.slug <= q + "\uf8ff")) &&
+  return matchesCompanySearch(company, filters.q) &&
     (!filters.industry.length || filters.industry.some(value => matchesIndustry(company, value))) &&
     (!filters.employees.length || filters.employees.some(value => matchesEmployeeRange(company.employees, value))) &&
     (!filters.batch.length || filters.batch.some(value => matchesBatch(company.batch, value))) &&
