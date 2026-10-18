@@ -59,7 +59,11 @@ function fixture(options: FixtureOptions = {}) {
           },
         },
       };
-      if (name === 'next/cache') return { revalidatePath: (path: string) => operations.push(`revalidate:${path}`) };
+      if (name === '@/lib/directory-cache') return { DIRECTORY_CACHE_TAG: 'company-directory' };
+      if (name === 'next/cache') return {
+        revalidatePath: (path: string) => operations.push(`revalidate:${path}`),
+        revalidateTag: (tag: string) => operations.push(`revalidate-tag:${tag}`),
+      };
       if (name === 'next/navigation') return { redirect };
       throw new Error(`Unexpected import: ${name}`);
     },
@@ -123,6 +127,7 @@ test('an ordinary authenticated user saves the company and founders once and pre
   assert.equal(action.writes[1].data.companyId, 'companies-id');
   assert.equal(action.writes[2].data.companyId, 'companies-id');
   assert.equal(action.operations.filter(operation => operation === 'commit').length, 1);
+  assert.ok(action.operations.includes('revalidate-tag:company-directory'));
   assert.equal(action.operations.at(-1), 'revalidate:/');
 });
 

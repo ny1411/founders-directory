@@ -1,7 +1,8 @@
 'use server'
 
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
-import { revalidatePath } from "next/cache"
+import { DIRECTORY_CACHE_TAG } from "@/lib/directory-cache"
+import { revalidatePath, revalidateTag } from "next/cache"
 import { redirect } from "next/navigation"
 
 export async function createCompany(formData: FormData, idToken: string): Promise<{ error: string }> {
@@ -84,6 +85,7 @@ export async function createCompany(formData: FormData, idToken: string): Promis
     return { error: 'Could not save the company. Please try again.' }
   }
 
+  revalidateTag(DIRECTORY_CACHE_TAG)
   revalidatePath('/')
   redirect(`/company/${slug}`)
 }

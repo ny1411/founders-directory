@@ -9,7 +9,7 @@ import { chromium, type Browser, type Page } from "playwright"
 // Only projected, public company fields are read; this suite never writes to Firestore.
 const baseUrl = process.env.DIRECTORY_TEST_URL || "http://127.0.0.1:3000"
 type StoredCompany = {
-  id: string; slug: string; industry?: string | null; tags?: string[] | null
+  id: string; slug: string; name?: string | null; industry?: string | null; tags?: string[] | null
   employees?: number | null; batch?: string | null; vcBacker?: string | null
 }
 let browser: Browser
@@ -26,7 +26,7 @@ before(async () => {
     privateKey: process.env.FIREBASE_PRIVATE_KEY!.replace(/\\n/g, "\n"),
   }) }, "directory-filter-tests")
   const snapshot = await getFirestore(app).collection("companies")
-    .select("slug", "industry", "tags", "employees", "batch", "vcBacker").get()
+    .select("slug", "name", "industry", "tags", "employees", "batch", "vcBacker").get()
   companies = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as StoredCompany))
   assert.ok(companies.length, "The integration database must contain companies")
   browser = await chromium.launch({
@@ -41,9 +41,14 @@ const isB2B = (company: StoredCompany) => Array.isArray(company.tags) && company
 const isHealthcare = (company: StoredCompany) => company.industry === "Healthcare" || company.tags?.includes("Healthcare") === true
 const hasSmallTeam = (company: StoredCompany) => typeof company.employees === "number" &&
   Number.isSafeInteger(company.employees) && company.employees >= 1 && company.employees <= 50
+const matchesSearch = (company: StoredCompany, query: string) => {
+  const normalized = query.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US")
+  return (company.name ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US").startsWith(normalized) ||
+    company.slug.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US").startsWith(normalized)
+}
 
 async function verify(page: Page, matches: (company: StoredCompany) => boolean) {
-  await page.waitForLoadState("networkidle")
+  await page.locator('[aria-busy="false"]').waitFor({ state: "visible" })
   const params = new URL(page.url()).searchParams
   const ordered = companies.filter(matches).sort((a, b) =>
     ((a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) *
@@ -59,13 +64,14 @@ async function withPage(run: (page: Page) => Promise<void>) {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/_next/image?**", route => route.fulfill({ status: 204 }))
   try { await run(page); assert.deepEqual(errors, [], "No browser runtime errors") }
   finally { await page.close() }
 }
 
 test("production B2B clicks and next/previous pages match only explicit Firestore tags", { timeout: 120_000 }, async () => {
   await withPage(async page => {
-    await page.goto(baseUrl, { waitUntil: "networkidle" })
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" })
     assert.match(await page.title(), /Founders Directory/)
     await page.locator("aside").getByRole("link", { name: "B2B", exact: true }).click()
     await page.waitForURL(url => url.searchParams.get("industry") === "B2B")
@@ -83,7 +89,7 @@ test("production B2B clicks and next/previous pages match only explicit Firestor
 
 test("multi-selection combines groups and survives batch, sort, search, and clearing", { timeout: 120_000 }, async () => {
   await withPage(async page => {
-    await page.goto(`${baseUrl}/?industry=B2B`, { waitUntil: "networkidle" })
+    await page.goto(`${baseUrl}/?industry=B2B`, { waitUntil: "domcontentloaded" })
     for (const [name, key, count] of [["Healthcare", "industry", 2], ["1-10", "employees", 1], ["11-50", "employees", 2]] as const) {
       await page.locator("aside").getByRole("link", { name, exact: true }).click()
       await page.waitForURL(url => url.searchParams.getAll(key).length === count)
@@ -108,19 +114,19 @@ test("multi-selection combines groups and survives batch, sort, search, and clea
     await page.locator("#search-input").press("Enter")
     await page.waitForURL(url => url.searchParams.get("q") === "a")
     for (const key of ["industry", "employees", "batch"]) assert.equal(new URL(page.url()).searchParams.getAll(key).length, 2)
-    await verify(page, company => withBatch(company) && company.slug.startsWith("a"))
+    await verify(page, company => withBatch(company) && matchesSearch(company, "a"))
     await page.getByRole("button", { name: "Clear batches", exact: true }).click()
     await page.waitForURL(url => !url.searchParams.has("batch"))
-    await verify(page, company => matches(company) && company.slug.startsWith("a"))
+    await verify(page, company => matches(company) && matchesSearch(company, "a"))
     await page.getByRole("link", { name: "Clear all filters", exact: true }).click()
     await page.waitForURL(url => !["industry", "employees", "batch", "vc"].some(key => url.searchParams.has(key)))
-    await verify(page, company => company.slug.startsWith("a"))
+    await verify(page, company => matchesSearch(company, "a"))
   })
 })
 
 test("direct page links recover from invalid cursors without losing alphabetical order", { timeout: 120_000 }, async () => {
   await withPage(async page => {
-    await page.goto(`${baseUrl}/?page=2&cursor=bad&sort=desc`, { waitUntil: "networkidle" })
+    await page.goto(`${baseUrl}/?page=2&cursor=bad&sort=desc`, { waitUntil: "domcontentloaded" })
     await verify(page, () => true)
   })
 })

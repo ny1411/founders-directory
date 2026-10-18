@@ -2,7 +2,7 @@ import { INDUSTRIES, matchesIndustry } from "./industry-filter"
 import { EMPLOYEE_RANGES, matchesEmployeeRange } from "./employee-filter"
 import { matchesBatch } from "./batch-filter"
 import { matchesVc } from "./vc-filter"
-import type { Company } from "./types"
+import type { DirectoryCompany } from "./directory-types"
 
 export type SearchParams = Record<string, string | string[] | undefined>
 export const FILTER_GROUPS = ["industry", "employees", "batch", "vc"] as const
@@ -58,7 +58,7 @@ export function normalizeCompanySearch(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US")
 }
 
-export function matchesCompanySearch(company: Pick<Company, "name" | "slug">, search: string): boolean {
+export function matchesCompanySearch(company: Pick<DirectoryCompany, "name" | "slug">, search: string): boolean {
   const query = normalizeCompanySearch(search)
   if (!query) return true
 
@@ -66,7 +66,7 @@ export function matchesCompanySearch(company: Pick<Company, "name" | "slug">, se
     normalizeCompanySearch(company.slug ?? "").startsWith(query)
 }
 
-export function matchesDirectoryFilters(company: Company, filters: DirectoryFilters): boolean {
+export function matchesDirectoryFilters(company: DirectoryCompany, filters: DirectoryFilters): boolean {
   return matchesCompanySearch(company, filters.q) &&
     (!filters.industry.length || filters.industry.some(value => matchesIndustry(company, value))) &&
     (!filters.employees.length || filters.employees.some(value => matchesEmployeeRange(company.employees, value))) &&
