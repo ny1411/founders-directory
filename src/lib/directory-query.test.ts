@@ -8,6 +8,7 @@ import type { Company } from "./types"
 const empty: DirectoryFilters = { q: "", sort: "asc", industry: [], employees: [], batch: [], vc: [] }
 const data = Array.from({ length: 25 }, (_, index) => ({
   id: String(index).padStart(2, "0"), slug: `company-${String(Math.floor(index / 2)).padStart(2, "0")}`,
+  name: `Company ${String(Math.floor(index / 2)).padStart(2, "0")}`,
   industry: index % 3 === 0 ? "Healthcare" : "Fintech", tags: index % 2 === 0 ? ["B2B"] : [],
   employees: index % 2 === 0 ? 5 : 1000, batch: index % 2 === 0 ? "Winter 2026" : "Summer 2026", vcBacker: index % 2 === 0 ? "YC" : "Other",
 } as Company))
@@ -127,4 +128,30 @@ test("base path direct pages, invalid cursor fallback, clamping, search and no r
   assert.equal(searched.totalCount, 2)
   const none = await loadDirectoryPage(collection, { ...empty, q: "zzz" }, 4, null, "next")
   assert.equal(none.page, 1); assert.deepEqual(none.companies, [])
+})
+
+test("displayed-name search works for legacy documents with stable sorting, counts, and pages", async () => {
+  const companies = [
+    { ...data[0], id: "ten", slug: "ten-by-ten", name: "10 By 10" },
+    ...Array.from({ length: 12 }, (_, index) => ({
+      ...data[index], id: `studio-${String(index).padStart(2, "0")}`,
+      slug: `unrelated-${String(12 - index).padStart(2, "0")}`,
+      name: `Legacy Studio ${String(index).padStart(2, "0")}`,
+    })),
+  ]
+  const { collection, calls } = mockCollection(companies)
+
+  const exact = await loadDirectoryPage(collection, { ...empty, q: "  10   bY  10 " }, 1, null, "next")
+  assert.deepEqual(exact.companies.map(company => company.id), ["ten"])
+
+  const filters = { ...empty, q: "  LEGACY   STUDIO " }
+  const first = await loadDirectoryPage(collection, filters, 1, null, "next")
+  const second = await loadDirectoryPage(collection, filters, 2, null, "next")
+  assert.equal(first.totalCount, 12)
+  assert.equal(first.totalPages, 2)
+  assert.equal(second.totalCount, 12)
+  assert.deepEqual([...first.companies, ...second.companies].map(company => company.slug),
+    companies.slice(1).map(company => company.slug).sort())
+  assert.equal(calls.some(call => call.method === "where"), false)
+  assert.equal(calls.some(call => call.method === "count"), false)
 })
