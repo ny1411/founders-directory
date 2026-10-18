@@ -20,6 +20,13 @@ export async function generateMetadata(
   if (companySnapshot.empty) {
     return {
       title: "Company Not Found",
+      alternates: {
+        canonical: null,
+      },
+      robots: {
+        index: false,
+        follow: false,
+      },
     }
   }
 
@@ -29,6 +36,9 @@ export async function generateMetadata(
   return {
     title: company.name,
     description: company.oneLiner || company.description || `View details about ${company.name}`,
+    alternates: {
+      canonical: `/company/${params.slug}`,
+    },
     openGraph: {
       title: `${company.name} | Founders Directory`,
       description: company.oneLiner || company.description || `View details about ${company.name}`,
