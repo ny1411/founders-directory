@@ -4,6 +4,14 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { buttonVariants } from '@/components/ui/button';
 import { X, Copy, ExternalLink, Loader2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { auth } from '@/lib/firebase';
+import {
+  MessageGenerationError,
+  readMessageGenerationResponse,
+  type MessageGenerationFailure,
+} from '@/lib/onboarding/message-client';
+import { ColdDmErrorPanel } from './cold-dm-error-panel';
 
 interface ColdDmModalProps {
   founderId: string;
@@ -17,8 +25,10 @@ interface ColdDmModalProps {
 
 export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, linkedinUrl, email, onClose }: ColdDmModalProps) {
   const { user } = useAuth();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<{ message: string; failure: MessageGenerationFailure } | null>(null);
+  const [recoveringSession, setRecoveringSession] = useState(false);
   const [dmText, setDmText] = useState('');
   const [copied, setCopied] = useState(false);
   const [localEmail, setLocalEmail] = useState(email);
@@ -68,12 +78,30 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
   }, [onClose]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+
     const generateDm = async () => {
-      if (!user) return;
+      if (!user) {
+        setError({
+          message: 'Your session has expired. Sign in again to create a custom message.',
+          failure: 'auth',
+        });
+        setLoading(false);
+        return;
+      }
       setLoading(true);
-      setError('');
+      setError(null);
       try {
-        const token = await user.getIdToken();
+        let token: string;
+        try {
+          token = await user.getIdToken();
+        } catch {
+          throw new MessageGenerationError(
+            'Your session has expired. Sign in again to create a custom message.',
+            'auth',
+          );
+        }
         const res = await fetch('/api/generate-dm', {
           method: 'POST',
           headers: {
@@ -81,24 +109,42 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
             Authorization: `Bearer ${token}`
           },
           body: JSON.stringify({ founderId, companySlug }),
+          signal: controller.signal,
         });
 
-        const data = await res.json();
-        
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to generate DM');
-        }
-
-        setDmText(data.dmText);
+        const message = await readMessageGenerationResponse(res);
+        if (active) setDmText(message);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred.');
+        if (!active || (err instanceof DOMException && err.name === 'AbortError')) return;
+        setError({
+          message: err instanceof MessageGenerationError
+            ? err.message
+            : 'Unable to generate a message right now. Please try again.',
+          failure: err instanceof MessageGenerationError ? err.failure : 'request',
+        });
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
     generateDm();
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [user, founderId, companySlug]);
+
+  const handleSessionRecovery = async () => {
+    if (recoveringSession) return;
+    setRecoveringSession(true);
+    try {
+      await auth?.signOut();
+    } catch (error) {
+      console.error('Unable to clear expired session:', error);
+    } finally {
+      router.push('/login');
+    }
+  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(dmText);
@@ -189,7 +235,12 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
               <p className="text-secondary-foreground">Generating highly personalized message...</p>
             </div>
           ) : error ? (
-            <div role="alert" className="text-red-500 py-4 text-center break-words">{error}</div>
+            <ColdDmErrorPanel
+              failure={error.failure}
+              message={error.message}
+              recoveringSession={recoveringSession}
+              onRecoverSession={handleSessionRecovery}
+            />
           ) : (
             <>
               <p className="text-sm text-secondary-foreground">
