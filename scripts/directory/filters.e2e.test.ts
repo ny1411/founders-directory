@@ -6,10 +6,11 @@ import { getFirestore } from "firebase-admin/firestore"
 import { chromium, type Browser, type Page } from "playwright"
 
 // Run against `next build && next start` to catch production navigation regressions.
-// Only projected, public company fields are read; this suite never writes to Firestore.
+// Fixtures only read public company projections. API requests update their normal
+// durable quota buckets; no company, user, or paid provider data is changed.
 const baseUrl = process.env.DIRECTORY_TEST_URL || "http://127.0.0.1:3000"
 type StoredCompany = {
-  id: string; slug: string; industry?: string | null; tags?: string[] | null
+  id: string; slug: string; name?: string; industry?: string | null; tags?: string[] | null
   employees?: number | null; batch?: string | null; vcBacker?: string | null
 }
 let browser: Browser
@@ -26,7 +27,7 @@ before(async () => {
     privateKey: process.env.FIREBASE_PRIVATE_KEY!.replace(/\\n/g, "\n"),
   }) }, "directory-filter-tests")
   const snapshot = await getFirestore(app).collection("companies")
-    .select("slug", "industry", "tags", "employees", "batch", "vcBacker").get()
+    .select("slug", "name", "industry", "tags", "employees", "batch", "vcBacker").get()
   companies = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as StoredCompany))
   assert.ok(companies.length, "The integration database must contain companies")
   browser = await chromium.launch({
@@ -41,22 +42,33 @@ const isB2B = (company: StoredCompany) => Array.isArray(company.tags) && company
 const isHealthcare = (company: StoredCompany) => company.industry === "Healthcare" || company.tags?.includes("Healthcare") === true
 const hasSmallTeam = (company: StoredCompany) => typeof company.employees === "number" &&
   Number.isSafeInteger(company.employees) && company.employees >= 1 && company.employees <= 50
+const startsWithA = (company: StoredCompany) => company.slug.toLowerCase().startsWith("a") ||
+  (company.name ?? "").trim().toLowerCase().startsWith("a")
 
 async function verify(page: Page, matches: (company: StoredCompany) => boolean) {
-  await page.waitForLoadState("networkidle")
+  // History navigation does not cause a document load. Wait for the actual
+  // client search result instead of an already-idle document lifecycle.
+  await page.locator('[aria-busy="false"]').waitFor()
   const params = new URL(page.url()).searchParams
   const ordered = companies.filter(matches).sort((a, b) =>
     ((a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) *
     (params.get("sort") === "desc" ? -1 : 1))
-  const pageNumber = Math.min(Number(params.get("page")) || 1, Math.max(1, Math.ceil(ordered.length / 10)))
-  assert.equal(Number(await page.locator("section span.text-3xl").innerText()), ordered.length)
+  // The cached hero is the total directory size. Exact filtered totals are no
+  // longer computed because that required unbounded per-request scans.
+  assert.equal(Number(await page.locator("section span.text-3xl").innerText()), companies.length)
   const slugs = await page.locator("a.block.h-full").evaluateAll(links =>
-    links.map(link => link.getAttribute("href")!.split("/").pop()))
-  assert.deepEqual(slugs, ordered.slice((pageNumber - 1) * 10, pageNumber * 10).map(company => company.slug))
+    links.map(link => link.getAttribute("href")!.split("/").pop()!))
+  assert.ok(slugs.length <= 10)
+  const expected = ordered.map(company => company.slug)
+  assert.ok(slugs.every(slug => expected.includes(slug)), "Each rendered company matches all filters")
+  assert.deepEqual(slugs, [...slugs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0) * (params.get("sort") === "desc" ? -1 : 1)))
+  assert.equal(await page.getByRole("status").filter({ hasText: /Search is temporarily unavailable|Too many searches/ }).count(), 0)
 }
 
 async function withPage(run: (page: Page) => Promise<void>) {
   const page = await browser.newPage()
+  // Exercise logo fallbacks without depending on external image-host access.
+  await page.route('**/_next/image?**', route => route.fulfill({ status: 404, body: '' }))
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try { await run(page); assert.deepEqual(errors, [], "No browser runtime errors") }
@@ -108,19 +120,20 @@ test("multi-selection combines groups and survives batch, sort, search, and clea
     await page.locator("#search-input").press("Enter")
     await page.waitForURL(url => url.searchParams.get("q") === "a")
     for (const key of ["industry", "employees", "batch"]) assert.equal(new URL(page.url()).searchParams.getAll(key).length, 2)
-    await verify(page, company => withBatch(company) && company.slug.startsWith("a"))
+    await verify(page, company => withBatch(company) && startsWithA(company))
     await page.getByRole("button", { name: "Clear batches", exact: true }).click()
     await page.waitForURL(url => !url.searchParams.has("batch"))
-    await verify(page, company => matches(company) && company.slug.startsWith("a"))
+    await verify(page, company => matches(company) && startsWithA(company))
     await page.getByRole("link", { name: "Clear all filters", exact: true }).click()
     await page.waitForURL(url => !["industry", "employees", "batch", "vc"].some(key => url.searchParams.has(key)))
-    await verify(page, company => company.slug.startsWith("a"))
+    await verify(page, startsWithA)
   })
 })
 
-test("direct page links recover from invalid cursors without losing alphabetical order", { timeout: 120_000 }, async () => {
+test("direct page links with invalid cursors reset instead of executing offset scans", { timeout: 120_000 }, async () => {
   await withPage(async page => {
     await page.goto(`${baseUrl}/?page=2&cursor=bad&sort=desc`, { waitUntil: "networkidle" })
     await verify(page, () => true)
+    assert.equal(await page.getByText("Page 1", { exact: true }).count(), 1)
   })
 })

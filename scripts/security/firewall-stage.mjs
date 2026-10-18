@@ -1,0 +1,34 @@
+import { spawnSync } from 'node:child_process';
+import { addRuleArgs, missingRules, observationRules, projectId, teamId, teamSlug } from './firewall-rules.mjs';
+
+// Default is a local plan. Only --stage writes drafts; there is intentionally no
+// publish, discard, attack-mode, system-mitigation or full-config PUT path.
+const stage = process.argv.slice(2);
+if (stage.length && (stage.length !== 1 || stage[0] !== '--stage')) {
+  throw new Error('Usage: node scripts/security/firewall-stage.mjs [--stage]');
+}
+if (!stage.length) {
+  console.log(JSON.stringify({ projectId, teamId, stageOnly: true, rules: observationRules() }, null, 2));
+} else {
+  function cli(args) {
+    const result = spawnSync('vercel', args, { encoding: 'utf8', timeout: 30_000, env: { ...process.env, VERCEL_TELEMETRY_DISABLED: '1' } });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(result.stderr || result.stdout || `CLI exited ${result.status}`);
+    return result.stdout;
+  }
+  const scope = ['--non-interactive', '--scope', teamSlug];
+  // Inspect both versions in a single read. Never guess that auth/plan failures
+  // mean an empty config. The unversioned GET returns active + draft configs.
+  const config = JSON.parse(cli([...scope, 'api', `/v1/security/firewall/config?projectId=${projectId}&teamId=${teamId}`, '--method', 'GET']));
+  const data = config.result ?? config;
+  if (!Object.hasOwn(data, 'active') && !Object.hasOwn(data, 'draft')) {
+    throw new Error('Unexpected config response; inspect with vercel firewall overview before staging.');
+  }
+  const existing = (data.draft ?? data.active)?.rules ?? [];
+  const rules = missingRules(existing);
+  console.log(`Preserving ${existing.length} existing rules; staging ${rules.length} observation rules.`);
+  for (const rule of rules) console.log(cli(addRuleArgs(rule)));
+  console.log(cli([...scope, 'firewall', 'rules', 'list', '--project', projectId, '--expand', '--json']));
+  console.log(cli([...scope, 'firewall', 'diff', '--project', projectId, '--json']));
+  console.log('Draft only. Owner must inspect every rule and review the complete draft before publishing.');
+}

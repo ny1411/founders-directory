@@ -1,157 +1,106 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { CollectionReference } from "firebase-admin/firestore"
-import { loadDirectoryCandidates, loadDirectoryPage } from "./directory-query"
+import { DIRECTORY_SCAN_LIMIT, loadDirectoryPage } from "./directory-query"
 import { parseCursor, type DirectoryFilters } from "./directory-filters"
 import type { Company } from "./types"
 
 const empty: DirectoryFilters = { q: "", sort: "asc", industry: [], employees: [], batch: [], vc: [] }
-const data = Array.from({ length: 25 }, (_, index) => ({
-  id: String(index).padStart(2, "0"), slug: `company-${String(Math.floor(index / 2)).padStart(2, "0")}`,
-  name: `Company ${String(Math.floor(index / 2)).padStart(2, "0")}`,
-  industry: index % 3 === 0 ? "Healthcare" : "Fintech", tags: index % 2 === 0 ? ["B2B"] : [],
-  employees: index % 2 === 0 ? 5 : 1000, batch: index % 2 === 0 ? "Winter 2026" : "Summer 2026", vcBacker: index % 2 === 0 ? "YC" : "Other",
+const data = Array.from({ length: 450 }, (_, i) => ({
+  id: String(i).padStart(3, "0"), slug: `company-${String(Math.floor(i / 2)).padStart(3, "0")}`,
+  name: `Company ${i}`, batch: i % 2 ? "Winter 2026" : "Summer 2026", vcBacker: i % 2 ? "YC" : "Other",
+  tags: i === 430 ? ["B2B"] : [], employees: i % 2 ? 5 : 1000,
 } as Company))
 
 function mockCollection(companies = data) {
-  const calls: { method: string; args: unknown[] }[] = []
-  type Condition = [string, string, unknown]
-  const make = (conditions: Condition[] = [], sort = "asc", skip = 0, limit = Infinity, last = false, boundary?: { values: [string, string]; before: boolean }) => {
-    const chain = (method: string, args: unknown[]) => calls.push({ method, args })
-    const query = {
-      where: (field: string, operator: string, value: unknown) => { chain("where", [field, operator, value]); return make([...conditions, [field, operator, value]], sort, skip, limit, last, boundary) },
-      orderBy: (field: unknown, order: string) => { chain("orderBy", [field, order]); return make(conditions, order, skip, limit, last, boundary) },
-      offset: (value: number) => { chain("offset", [value]); return make(conditions, sort, value, limit, last, boundary) },
-      limit: (value: number) => { chain("limit", [value]); return make(conditions, sort, skip, value, false, boundary) },
-      limitToLast: (value: number) => { chain("limitToLast", [value]); return make(conditions, sort, skip, value, true, boundary) },
-      startAfter: (...values: [string, string]) => { chain("startAfter", values); return make(conditions, sort, skip, limit, last, { values, before: false }) },
-      endBefore: (...values: [string, string]) => { chain("endBefore", values); return make(conditions, sort, skip, limit, last, { values, before: true }) },
-      count: () => { chain("count", []); return { get: async () => ({ data: () => ({ count: select().length }) }) } },
-      get: async () => {
-        chain("get", [])
-        let selected = select().sort((a, b) => ((a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) || (a.id < b.id ? -1 : 1)) * (sort === "desc" ? -1 : 1))
-        if (boundary) {
-          const [slug, id] = boundary.values
-          selected = selected.filter(company => {
-            const compare = ((company.slug < slug ? -1 : company.slug > slug ? 1 : 0) || (company.id < id ? -1 : company.id > id ? 1 : 0)) * (sort === "desc" ? -1 : 1)
-            return boundary.before ? compare < 0 : compare > 0
-          })
-        }
-        selected = last ? selected.slice(-limit) : selected.slice(skip, skip + limit)
-        return { docs: selected.map(company => ({ id: company.id, data: () => company })) }
-      },
-    }
-    function select() {
-      return companies.filter(company => conditions.every(([field, operator, value]) => {
-        const stored = company[field as keyof Company]
-        if (operator === "array-contains") return Array.isArray(stored) && stored.includes(value as string)
-        if (operator === "==") return stored === value
-        if (operator === ">=") return typeof stored === typeof value && (stored as string | number) >= (value as string | number)
-        return typeof stored === typeof value && (stored as string | number) <= (value as string | number)
-      }))
-    }
-    return query
+  const calls: { method: string; value: unknown }[] = []
+  let order = "asc", bound: [string, string] | null = null, take = Infinity
+  let facet: { field: string; values: string[] } | null = null
+  const query = {
+    where(field: string, op: string, values: string[]) { assert.equal(op, "in"); facet = { field, values }; calls.push({ method: "where", value: field }); return query },
+    orderBy(_field: unknown, value: string) { order = value; return query },
+    startAfter(...value: [string, string]) { bound = value; return query },
+    select(...fields: string[]) { calls.push({ method: "select", value: fields }); return query },
+    limit(value: number) { take = value; calls.push({ method: "limit", value }); return query },
+    async get() {
+      assert.ok(Number.isFinite(take), "every get must have a hard limit")
+      calls.push({ method: "get", value: take })
+      const compare = (a: Company, b: { slug: string; id: string }) =>
+        ((a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) * (order === "desc" ? -1 : 1)
+      const docs = companies.filter(company => (!facet || facet.values.includes(String(company[facet.field as keyof Company]))) &&
+        (!bound || compare(company, { slug: bound[0], id: bound[1] }) > 0))
+        .sort(compare).slice(0, take).map(company => ({ id: company.id, data: () => company }))
+      return { docs }
+    },
   }
-  return { collection: make() as unknown as CollectionReference, calls }
+  return { collection: query as unknown as CollectionReference, calls }
 }
 
-test("candidate orchestration unions selected batch queries and applies all groups locally", async () => {
-  const { collection, calls } = mockCollection()
-  const filters: DirectoryFilters = { ...empty, industry: ["B2B", "Healthcare"], employees: ["1-10", "501+"], batch: ["Winter 2026", "Summer 2026"], vc: ["YC", "Other"] }
-  const result = await loadDirectoryCandidates(collection, filters)
-  assert.deepEqual(calls.filter(call => call.method === "where").map(call => call.args), [["batch", "==", "Winter 2026"], ["batch", "==", "Summer 2026"]])
-  assert.equal(calls.some(call => call.method === "orderBy"), false)
-  assert.deepEqual(new Set(result.map(company => company.id)), new Set(data.filter(company => company.tags?.includes("B2B") || company.industry === "Healthcare").map(company => company.id)))
-  const strict = await loadDirectoryCandidates(collection, { ...filters, industry: ["B2B"], employees: ["1-10"], vc: ["Other"] })
-  assert.deepEqual(strict, [])
-})
-
-test("industry query unions deduplicate overlapping primary labels and tags", async () => {
-  const { collection, calls } = mockCollection()
-  const result = await loadDirectoryCandidates(collection, { ...empty, industry: ["B2B", "Healthcare", "Fintech"] })
-  assert.equal(result.length, data.length)
-  assert.equal(new Set(result.map(company => company.id)).size, data.length)
-  assert.ok(calls.filter(call => call.method === "where").every(call => ["industry", "tags"].includes(String(call.args[0]))))
-  assert.equal(calls.filter(call => call.method === "get").length, 5)
-})
-
-test("multi employee and VC candidates use only their selected field", async () => {
-  for (const [group, values, field] of [["employees", ["1-10", "501+"], "employees"], ["vc", ["YC", "Other"], "vcBacker"]] as const) {
-    const { collection, calls } = mockCollection()
-    const result = await loadDirectoryCandidates(collection, { ...empty, [group]: [...values] })
-    assert.equal(result.length, 25)
-    assert.ok(calls.filter(call => call.method === "where").every(call => call.args[0] === field))
-    assert.equal(calls.filter(call => call.method === "get").length, 2)
-  }
-})
-
-test("combined filtering has stable pages, reverse ordering, clamping, and empty results", async () => {
-  const { collection } = mockCollection()
-  const filters = { ...empty, employees: ["1-10", "501+"] }
-  const pages = await Promise.all([1, 2, 3].map(page => loadDirectoryPage(collection, filters, page, null, "next")))
-  assert.deepEqual(pages.flatMap(page => page.companies.map(company => company.id)), data.map(company => company.id))
-  assert.deepEqual(pages.map(page => page.totalCount), [25, 25, 25])
-  const last = await loadDirectoryPage(collection, filters, 999, null, "next")
-  assert.equal(last.page, 3)
-  const descending = await loadDirectoryPage(collection, { ...filters, sort: "desc" }, 1, null, "next")
-  assert.deepEqual(descending.companies.map(company => company.id), [...data].reverse().slice(0, 10).map(company => company.id))
-  const none = await loadDirectoryPage(collection, { ...filters, q: "zzz" }, 999, null, "next")
-  assert.equal(none.page, 1); assert.equal(none.totalCount, 0); assert.equal(none.totalPages, 0); assert.deepEqual(none.companies, [])
-})
-
-test("base path uses count and limited reads with valid two-part next/previous cursors", async () => {
+test("default pages use at most 11 projected reads and forward/backward tie-breaker cursors", async () => {
   for (const sort of ["asc", "desc"] as const) {
-    const { collection, calls } = mockCollection()
+    const firstMock = mockCollection()
     const filters = { ...empty, sort }
-    const first = await loadDirectoryPage(collection, filters, 1, null, "next")
-    const second = await loadDirectoryPage(collection, filters, 2, parseCursor(first.lastItemCursor ?? undefined), "next")
-    const previous = await loadDirectoryPage(collection, filters, 1, parseCursor(second.firstItemCursor ?? undefined), "prev")
-    const expected = sort === "asc" ? data : [...data].reverse()
-    assert.deepEqual(first.companies.map(company => company.id), expected.slice(0, 10).map(company => company.id))
-    assert.deepEqual(second.companies.map(company => company.id), expected.slice(10, 20).map(company => company.id))
+    const first = await loadDirectoryPage(firstMock.collection, filters, 1, null, "next")
+    assert.equal(first.companies.length, 10)
+    assert.deepEqual(firstMock.calls.filter(call => call.method === "get").map(call => call.value), [11])
+    const fields = firstMock.calls.find(call => call.method === "select")!.value as string[]
+    assert.ok(fields.includes("name")); assert.ok(!fields.includes("email"))
+    const second = await loadDirectoryPage(mockCollection().collection, filters, 2, parseCursor(first.lastItemCursor!), "next")
+    assert.equal(new Set([...first.companies, ...second.companies].map(company => company.id)).size, 20)
+    const previous = await loadDirectoryPage(mockCollection().collection, filters, 1, parseCursor(second.firstItemCursor!), "prev")
     assert.deepEqual(previous.companies, first.companies)
-    assert.deepEqual(JSON.parse(first.lastItemCursor!), [first.companies[9].slug, first.companies[9].id])
-    assert.equal(calls.filter(call => call.method === "count").length, 3)
-    assert.equal(calls.filter(call => call.method === "get").length, 3)
-    assert.equal(calls.filter(call => ["limit", "limitToLast"].includes(call.method)).length, 3)
   }
 })
 
-test("base path direct pages, invalid cursor fallback, clamping, search and no results", async () => {
-  const { collection, calls } = mockCollection()
-  const second = await loadDirectoryPage(collection, empty, 2, parseCursor('[5,"wrong","schema"]'), "next")
-  assert.deepEqual(second.companies.map(company => company.id), data.slice(10, 20).map(company => company.id))
-  assert.ok(calls.some(call => call.method === "offset" && call.args[0] === 10))
-  const last = await loadDirectoryPage(collection, empty, 999, ["bad", "bad"], "next")
-  assert.equal(last.page, 3); assert.equal(last.companies.length, 5)
-  const searched = await loadDirectoryPage(collection, { ...empty, q: "COMPANY-01" }, 1, null, "next")
-  assert.equal(searched.totalCount, 2)
-  const none = await loadDirectoryPage(collection, { ...empty, q: "zzz" }, 4, null, "next")
-  assert.equal(none.page, 1); assert.deepEqual(none.companies, [])
+test("sparse filter windows stop at 200 and explicit continuation eventually discovers late records", async () => {
+  const filters = { ...empty, industry: ["B2B"] }
+  const first = await loadDirectoryPage(mockCollection().collection, filters, 1, null, "next")
+  assert.deepEqual(first.companies, []); assert.equal(first.scanLimited, true); assert.equal(first.hasNext, true)
+  const second = await loadDirectoryPage(mockCollection().collection, filters, 2, parseCursor(first.lastItemCursor!), "next")
+  assert.deepEqual(second.companies, []); assert.equal(second.hasNext, true)
+  const lastMock = mockCollection()
+  const last = await loadDirectoryPage(lastMock.collection, filters, 3, parseCursor(second.lastItemCursor!), "next")
+  assert.deepEqual(last.companies.map(company => company.id), ["430"])
+  assert.equal(last.hasNext, false)
+  assert.ok(lastMock.calls.every(call => call.method !== "get" || Number(call.value) <= DIRECTORY_SCAN_LIMIT))
 })
 
-test("displayed-name search works for legacy documents with stable sorting, counts, and pages", async () => {
-  const companies = [
-    { ...data[0], id: "ten", slug: "ten-by-ten", name: "10 By 10" },
-    ...Array.from({ length: 12 }, (_, index) => ({
-      ...data[index], id: `studio-${String(index).padStart(2, "0")}`,
-      slug: `unrelated-${String(12 - index).padStart(2, "0")}`,
-      name: `Legacy Studio ${String(index).padStart(2, "0")}`,
-    })),
-  ]
-  const { collection, calls } = mockCollection(companies)
+test("indexed batch/VC selection and residual intersection preserve filtering", async () => {
+  for (const [key, value, field] of [["batch", "Winter 2026", "batch"], ["vc", "YC", "vcBacker"]] as const) {
+    const mocked = mockCollection()
+    const result = await loadDirectoryPage(mocked.collection, { ...empty, [key]: [value], employees: ["1-10"] }, 1, null, "next")
+    assert.equal(result.companies.length, 10)
+    assert.ok(result.companies.every(company => company.employees === 5))
+    assert.deepEqual(mocked.calls.filter(call => call.method === "where").map(call => call.value), [field])
+  }
+})
 
-  const exact = await loadDirectoryPage(collection, { ...empty, q: "  10   bY  10 " }, 1, null, "next")
-  assert.deepEqual(exact.companies.map(company => company.id), ["ten"])
+test("legacy displayed names still match, and a deep page without valid cursor resets instead of offset scanning", async () => {
+  const companies = [{ ...data[0], name: "10 By 10", slug: "ten-by-ten" }]
+  const result = await loadDirectoryPage(mockCollection(companies).collection, { ...empty, q: " 10   bY 10 " }, 100000, null, "next")
+  assert.equal(result.page, 1); assert.equal(result.companies.length, 1)
+  assert.equal(result.totalCount, null); assert.equal(result.hasNext, false)
+})
 
-  const filters = { ...empty, q: "  LEGACY   STUDIO " }
-  const first = await loadDirectoryPage(collection, filters, 1, null, "next")
-  const second = await loadDirectoryPage(collection, filters, 2, null, "next")
-  assert.equal(first.totalCount, 12)
-  assert.equal(first.totalPages, 2)
-  assert.equal(second.totalCount, 12)
-  assert.deepEqual([...first.companies, ...second.companies].map(company => company.slug),
-    companies.slice(1).map(company => company.slug).sort())
-  assert.equal(calls.some(call => call.method === "where"), false)
-  assert.equal(calls.some(call => call.method === "count"), false)
+test("normalization caps free text, facet fanout and cursor lengths", async () => {
+  const { parseDirectoryFilters } = await import("./directory-filters")
+  const labels = Array.from({ length: 20 }, (_, i) => `VC ${i}`)
+  const parsed = parseDirectoryFilters({ q: "x".repeat(500), vc: labels }, { batches: [], vcs: labels })
+  assert.equal(parsed.q.length, 100); assert.equal(parsed.vc.length, 10)
+  assert.equal(parseCursor(JSON.stringify(["x".repeat(501), "id"])), null)
+})
+
+test("missing composite indexes fall back only to a bounded projected slug window", async () => {
+  const base = mockCollection()
+  const missing = {
+    orderBy() { return missing }, select() { return missing }, limit() { return missing },
+    async get(): Promise<never> { throw Object.assign(new Error("missing index"), { code: 9 }) },
+  }
+  const collection = new Proxy(base.collection, {
+    get(target, key) { return key === "where" ? () => missing : Reflect.get(target, key) },
+  })
+  const result = await loadDirectoryPage(collection, { ...empty, batch: ["Winter 2026"] }, 1, null, "next")
+  assert.equal(result.companies.length, 10)
+  assert.ok(result.companies.every(company => company.batch === "Winter 2026"))
+  assert.deepEqual(base.calls.filter(call => call.method === "get").map(call => call.value), [DIRECTORY_SCAN_LIMIT])
 })

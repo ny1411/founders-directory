@@ -1,8 +1,9 @@
 'use server'
 
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
-import { revalidatePath } from "next/cache"
+import { revalidatePath, revalidateTag } from "next/cache"
 import { redirect } from "next/navigation"
+import { updateDirectoryMetadata } from "@/lib/directory-metadata"
 
 export async function createCompany(formData: FormData, idToken: string): Promise<{ error: string }> {
   if (typeof idToken !== 'string' || !idToken.trim()) {
@@ -79,11 +80,23 @@ export async function createCompany(formData: FormData, idToken: string): Promis
     }
 
     await batch.commit();
+    try {
+      await updateDirectoryMetadata(adminDb, { vcBacker });
+    } catch {
+      // The company is already saved. A metadata outage must not invite a
+      // duplicate submission; the maintenance refresh can restore its facets.
+      console.error('Directory options refresh failed after company creation')
+    }
   } catch (error) {
     console.error('Company submission failed', error)
     return { error: 'Could not save the company. Please try again.' }
   }
 
+  // Only listing mutations invalidate directory data. Profile saves and contact
+  // enrichment must not evict the public homepage from the CDN.
+  revalidateTag('directory-default')
+  revalidateTag('directory-options')
+  revalidateTag('directory-search')
   revalidatePath('/')
   redirect(`/company/${slug}`)
 }

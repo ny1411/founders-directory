@@ -9,7 +9,7 @@ const company = (overrides: Partial<Company> = {}) => ({ id: "a", slug: "acme", 
 
 test("repeated facets accept unique valid options and malformed scalar params are safe", () => {
   assert.deepEqual(parseDirectoryFilters({ industry: ["B2B", "Healthcare", "B2B", "invalid"], employees: ["1-10", "501+", "bad"], batch: options.batches, vc: options.vcs, q: [" ac ", "ignored"], sort: ["desc", "asc"] }, options), {
-    q: "ac", sort: "desc", industry: ["B2B", "Healthcare"], employees: ["1-10", "501+"], batch: options.batches, vc: options.vcs,
+    q: "ac", sort: "desc", industry: ["B2B", "Healthcare"], employees: ["1-10", "501+"], batch: [...options.batches].sort(), vc: [...options.vcs].sort(),
   })
   assert.deepEqual(parseDirectoryFilters({ industry: "unknown", employees: "0", batch: "bad", vc: "bad", q: [], sort: ["bad"] }, options), empty)
   assert.deepEqual(parseDirectoryFilters({ industry: "B2B", employees: "1-10", batch: "Winter 2026", vc: "YC" }, options), { ...empty, industry: ["B2B"], employees: ["1-10"], batch: ["Winter 2026"], vc: ["YC"] })
