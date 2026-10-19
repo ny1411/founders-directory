@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import ts from 'typescript';
+import { parseDirectoryRequest } from '../../src/lib/directory-request';
 
 const compiled = ts.transpileModule(readFileSync(new URL('../../src/app/api/directory/route.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -16,6 +17,7 @@ function fixture(options: { denied?: boolean; failQuota?: boolean; failSnapshot?
     exports, Response, URL, console: { error() {} },
     require(name: string) {
       if (name === '@/lib/firebase-admin') return { adminDb: {} };
+      if (name === '@/lib/directory-request') return { parseDirectoryRequest };
       if (name === '@/lib/rate-limit') return {
         requestIp: () => 'trusted-ip',
         reserveQuota: async (_db: unknown, scope: string, uid: string, ip: string, limits: unknown) => {
@@ -48,13 +50,36 @@ function fixture(options: { denied?: boolean; failQuota?: boolean; failSnapshot?
   return { get: exports.GET, operations, params: () => receivedParams };
 }
 
-test('directory cache misses reserve quota before snapshot/page work and keep successful responses public', async () => {
+test('canonical directory cache misses reserve quota before snapshot/page work and keep successful responses public', async () => {
   const endpoint = fixture();
-  const response = await endpoint.get(new Request('https://example.com/api/directory?industry=B2B&industry=Healthcare&page=2&ignored=secret'));
+  const response = await endpoint.get(new Request('https://example.com/api/directory?industry=B2B&industry=Healthcare&page=2'));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'public, s-maxage=3600, stale-while-revalidate=86400');
   assert.deepEqual(endpoint.operations, ['quota', 'snapshot', 'page']);
   assert.deepEqual(JSON.parse(JSON.stringify(endpoint.params())), { industry: ['B2B', 'Healthcare'], page: '2' });
+});
+
+test('unknown parameters and cache-busting variants fail before quota/snapshot work', async () => {
+  const endpoint = fixture();
+  for (const noise of ['a', 'b']) {
+    const response = await endpoint.get(new Request(`https://example.com/api/directory?noise=${noise}`));
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+  }
+  assert.deepEqual(endpoint.operations, []);
+});
+
+test('equivalent URL variants redirect to one canonical key without directory work or loops', async () => {
+  const endpoint = fixture();
+  const response = await endpoint.get(new Request('https://example.com/api/directory?industry=healthcare&industry=B2B&industry=B2B&sort=asc&page=1&q=%20AI%20%20TOOLS%20'));
+  assert.equal(response.status, 307);
+  assert.equal(response.headers.get('location'), '/api/directory?q=ai+tools&industry=B2B&industry=Healthcare');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(endpoint.operations, []);
+  const canonical = await endpoint.get(new Request(`https://example.com${response.headers.get('location')}`));
+  assert.equal(canonical.status, 200);
+  assert.equal(canonical.headers.get('location'), null);
+  assert.deepEqual(endpoint.operations, ['quota', 'snapshot', 'page']);
 });
 
 test('directory quota denials are uncacheable and do not load the snapshot', async () => {
@@ -80,6 +105,14 @@ test('quota and snapshot outages fail closed without exposing internal details o
 test('oversized queries fail before quota/snapshot access', async () => {
   const endpoint = fixture();
   const response = await endpoint.get(new Request(`https://example.com/api/directory?q=${'x'.repeat(4096)}`));
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(endpoint.operations, []);
+});
+
+test('oversized complete URLs fail before quota/snapshot access', async () => {
+  const endpoint = fixture();
+  const response = await endpoint.get(new Request(`https://${'a'.repeat(8192)}.example/api/directory`));
   assert.equal(response.status, 400);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.deepEqual(endpoint.operations, []);
