@@ -2,12 +2,13 @@ import { buildDirectoryPage, getDirectorySnapshot } from "@/lib/directory-query"
 import type { SearchParams } from "@/lib/directory-filters"
 import { adminDb } from "@/lib/firebase-admin"
 import { requestIp, reserveQuota } from "@/lib/rate-limit"
+import { instrumentApiRoute } from "@/lib/observability-runtime"
 
 export const dynamic = "force-dynamic"
 
 const ALLOWED_PARAMS = new Set(["q", "sort", "industry", "employees", "batch", "vc", "page"])
 
-export async function GET(request: Request) {
+async function directoryGet(request: Request) {
   const url = new URL(request.url)
   if (url.search.length > 4096) {
     return Response.json({ error: "Query is too long." }, {
@@ -48,3 +49,10 @@ export async function GET(request: Request) {
     })
   }
 }
+
+export const GET = instrumentApiRoute({
+  route: "/api/directory",
+  event: "directory.query",
+  durationMetric: "directory.query.duration_ms",
+  provider: "firestore",
+}, directoryGet)

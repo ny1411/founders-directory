@@ -2,7 +2,9 @@
 
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
 import { DIRECTORY_CACHE_TAG } from "@/lib/directory-cache"
+import { verifyBotRequest } from "@/lib/bot-verification"
 import { revalidatePath, revalidateTag } from "next/cache"
+import { headers } from "next/headers"
 import { redirect } from "next/navigation"
 
 export async function createCompany(formData: FormData, idToken: string): Promise<{ error: string }> {
@@ -16,6 +18,9 @@ export async function createCompany(formData: FormData, idToken: string): Promis
   } catch {
     return { error: 'Your session could not be verified. Please sign in again.' }
   }
+
+  const botVerification = await verifyBotRequest(await headers(), '/company/new')
+  if (!botVerification.allowed) return { error: botVerification.message }
 
   const name = formData.get('name') as string
   const slug = formData.get('slug') as string

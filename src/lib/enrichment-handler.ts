@@ -18,7 +18,7 @@ interface Dependencies {
   verify(token: string): Promise<{uid: string}>;
   quota(uid: string, request: Request): Promise<{allowed: boolean; retryAfterSeconds: number}>;
   authorize(founderIds: string[], companySlug: string): Promise<boolean>;
-  start(uid: string, founderIds: string[], companySlug: string, idempotencyKey: string, request: Request): Promise<{jobId: string; status: string} | null>;
+  start(uid: string, founderIds: string[], companySlug: string, idempotencyKey: string, request: Request): Promise<{jobId: string; status: string} | {conflict: true} | null>;
   status(uid: string, jobId: string): Promise<EnrichmentJob | null>;
 }
 const json = (body: unknown, status = 200, headers = {}) => Response.json(body, {status, headers: {'Cache-Control': 'private, no-store', ...headers}});
@@ -45,6 +45,7 @@ export function createEnrichmentHandlers(deps: Dependencies) {
         if (!await deps.authorize(founderIds, body.companySlug)) return json({error: 'Founder or company not found'}, 404);
         const job = await deps.start(uid, founderIds, body.companySlug, key, request);
         if (!job) return json({error: 'An enrichment job is already running. Please wait.'}, 409, {'Retry-After': '10'});
+        if ('conflict' in job) return json({error: 'This idempotency key was already used for another request.'}, 409);
         console.info(JSON.stringify({event: 'enrichment_accepted', route: '/api/enrich-contact', jobId: job.jobId, batchSize: founderIds.length, quota: 'allowed'}));
         return json({...job, statusUrl: `/api/enrich-contact/${job.jobId}`}, 202, {'Retry-After': '3'});
       } catch (error) {

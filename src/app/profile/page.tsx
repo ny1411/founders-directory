@@ -9,6 +9,7 @@ import {
   ProfileRequestError,
   readOnboardingResponse,
 } from "@/lib/profile-load";
+import { BotIdProtection } from "@/components/bot-id-protection";
 
 export default function ProfilePage() {
   const { user, loading } = useAuth();
@@ -71,15 +72,18 @@ export default function ProfilePage() {
     );
 
   return (
-    <OnboardingForm
-      key={user.uid}
-      request={request}
-      upload={upload}
-      onExit={() => router.push("/")}
-      onLogout={async () => {
-        await auth?.signOut();
-        router.replace("/login");
-      }}
-    />
+    <>
+      <BotIdProtection />
+      <OnboardingForm
+        key={user.uid}
+        request={request}
+        upload={upload}
+        onExit={() => router.push("/")}
+        onLogout={async () => {
+          await auth?.signOut();
+          router.replace("/login");
+        }}
+      />
+    </>
   );
 }

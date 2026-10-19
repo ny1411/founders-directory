@@ -9,11 +9,13 @@ import {
   requestIp,
   reserveQuota,
 } from "@/lib/rate-limit";
+import { createBotProtectedPost } from "@/lib/bot-verification";
+import { instrumentApiRoute } from "@/lib/observability-runtime";
 
 export const runtime = "nodejs";
 const store = new OnboardingStore(adminDb);
 
-export const POST = createMessageHandler({
+const generateMessage = createMessageHandler({
   quota: (uid, request, kind) =>
     reserveQuota(
       adminDb,
@@ -101,3 +103,17 @@ export const POST = createMessageHandler({
       })
     ).text,
 });
+
+const protectedPost = createBotProtectedPost({
+  route: "/api/generate-dm",
+  verifyToken: (token) => adminAuth.verifyIdToken(token, true),
+  handler: generateMessage,
+});
+
+export const POST = instrumentApiRoute({
+  route: "/api/generate-dm",
+  event: "dm_generation",
+  durationMetric: "dm_generation.duration_ms",
+  attemptMetric: "dm_generation.attempts",
+  provider: "gemini",
+}, protectedPost);

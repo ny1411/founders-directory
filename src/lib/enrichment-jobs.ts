@@ -31,9 +31,13 @@ export const enrichmentHandlers = createEnrichmentHandlers({
   ]),
   authorize: async (ids, slug) => Boolean(await targets(ids, slug)),
   start: async (uid, founderIds, companySlug, key, request) => {
-    const jobId = hashIdentity(JSON.stringify([uid, founderIds, companySlug, key]));
+    // An idempotency key identifies one request for one user. Keep the payload
+    // out of the document ID so reusing a key with different input cannot start
+    // additional paid work after the first job's user lease has been released.
+    const jobId = hashIdentity(JSON.stringify([uid, key]));
     const existing = (await ref(jobId).get()).data() as EnrichmentJob | undefined;
     if (existing) {
+      if (existing.companySlug !== companySlug || existing.founderIds.length !== founderIds.length || existing.founderIds.some((id, index) => id !== founderIds[index])) return {conflict: true};
       if (existing.expiresAt < Date.now()) throw new Error('JOB_EXPIRED');
       if (existing.status === 'queued') await enqueue(jobId, 0);
       return {jobId, status: existing.status};

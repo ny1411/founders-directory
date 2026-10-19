@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { buttonVariants } from '@/components/ui/button';
 import { Send } from 'lucide-react';
 import { ColdDmModal } from './cold-dm-modal';
+import { BotIdProtection } from './bot-id-protection';
 
 interface SendDmButtonProps {
   founderId: string;
@@ -50,6 +51,7 @@ export function SendDmButton({ founderId, founderName, companySlug, twitterUrl, 
 
   return (
     <>
+      <BotIdProtection />
       <button 
         onClick={handleClick} 
         className={buttonVariants({ variant: "default", size: "sm", className: "w-full mt-4 flex items-center justify-center gap-2" })}
