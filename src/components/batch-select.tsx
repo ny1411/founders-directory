@@ -10,18 +10,23 @@ import {
 } from "@/components/ui/select";
 import { useMemo } from "react";
 
-export function BatchSelect({ batches, selected: currentBatches, onChange }: {
-  batches: string[]; selected: string[]; onChange: (values: string[]) => void
+export function BatchSelect({
+  batches,
+  value,
+  onValueChange,
+}: {
+  batches: string[]
+  value: string[]
+  onValueChange: (values: string[]) => void
 }) {
 
   const items = useMemo(() => [
     ...batches.map(batch => ({ value: batch, label: batch })),
   ], [batches]);
 
-
   return (
     <div className="flex flex-col gap-2">
-    <Select multiple items={items} value={currentBatches} onValueChange={onChange}>
+    <Select multiple items={items} value={value} onValueChange={onValueChange}>
       <SelectTrigger className="w-full min-w-0" aria-label="Batch">
         <SelectValue className="min-w-0 truncate" placeholder="All batches">
           {(values: string[]) => (
@@ -41,8 +46,8 @@ export function BatchSelect({ batches, selected: currentBatches, onChange }: {
         </SelectGroup>
       </SelectContent>
     </Select>
-    {currentBatches.length > 0 && (
-      <button type="button" onClick={() => onChange([])} className="text-xs text-left underline text-secondary-foreground">
+    {value.length > 0 && (
+      <button type="button" onClick={() => onValueChange([])} className="text-xs text-left underline text-secondary-foreground">
         Clear batches
       </button>
     )}

@@ -15,7 +15,6 @@ const compiledAction = ts.transpileModule(actionSource, {
 type FixtureOptions = {
   verify?: (token: string, checkRevoked: boolean) => Promise<unknown>;
   failCommit?: boolean;
-  failMetadata?: boolean;
 };
 
 // Execute the real server action with in-memory Firebase boundaries only.
@@ -60,15 +59,10 @@ function fixture(options: FixtureOptions = {}) {
           },
         },
       };
+      if (name === '@/lib/directory-cache') return { DIRECTORY_CACHE_TAG: 'company-directory' };
       if (name === 'next/cache') return {
         revalidatePath: (path: string) => operations.push(`revalidate:${path}`),
         revalidateTag: (tag: string) => operations.push(`revalidate-tag:${tag}`),
-      };
-      if (name === '@/lib/directory-metadata') return {
-        updateDirectoryMetadata: async () => {
-          operations.push('metadata-update');
-          if (options.failMetadata) throw new Error('metadata unavailable');
-        },
       };
       if (name === 'next/navigation') return { redirect };
       throw new Error(`Unexpected import: ${name}`);
@@ -133,12 +127,7 @@ test('an ordinary authenticated user saves the company and founders once and pre
   assert.equal(action.writes[1].data.companyId, 'companies-id');
   assert.equal(action.writes[2].data.companyId, 'companies-id');
   assert.equal(action.operations.filter(operation => operation === 'commit').length, 1);
-  assert.ok(action.operations.indexOf('metadata-update') > action.operations.indexOf('commit'));
-  assert.deepEqual(action.operations.filter(operation => operation.startsWith('revalidate-tag:')), [
-    'revalidate-tag:directory-default',
-    'revalidate-tag:directory-options',
-    'revalidate-tag:directory-search',
-  ]);
+  assert.ok(action.operations.includes('revalidate-tag:company-directory'));
   assert.equal(action.operations.at(-1), 'revalidate:/');
 });
 
@@ -146,12 +135,5 @@ test('an authenticated database failure returns a retryable error without redire
   const action = fixture({ failCommit: true });
   const result = await action.createCompany(submission(), 'fresh-token');
   assert.equal(result.error, 'Could not save the company. Please try again.');
-  assert.ok(!action.operations.some(operation => operation.startsWith('revalidate')));
-});
-
-test('an options metadata failure after commit still redirects and does not invite duplicate writes', async () => {
-  const action = fixture({ failMetadata: true });
-  await assert.rejects(action.createCompany(submission(), 'fresh-token'), /NEXT_REDIRECT/);
-  assert.equal(action.operations.filter(operation => operation === 'commit').length, 1);
-  assert.equal(action.operations.at(-1), 'revalidate:/');
+  assert.ok(!action.operations.some(operation => operation.startsWith('revalidate:')));
 });

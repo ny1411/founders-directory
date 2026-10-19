@@ -70,3 +70,16 @@ test("page and cursor parsing rejects invalid URLs without crashes", () => {
   assert.deepEqual(parseCursor('["acme","id"]'), ["acme", "id"])
   assert.deepEqual(parseCursor(['["acme","id"]', "bad"]), ["acme", "id"])
 })
+
+test("search and facets normalize to bounded values before filtering cached snapshots", () => {
+  const labels = Array.from({ length: 20 }, (_, index) => `VC ${index}`)
+  const filters = parseDirectoryFilters({ q: "  WORD   ".repeat(100), vc: [...labels, ...labels].reverse() }, {
+    batches: [], vcs: labels,
+  })
+  assert.equal(filters.q.length, 100)
+  assert.equal(filters.q.includes("  "), false)
+  assert.equal(filters.q, filters.q.toLowerCase())
+  assert.equal(filters.vc.length, 10)
+  assert.deepEqual(filters.vc, [...labels].sort().slice(0, 10))
+  assert.equal(parseCursor(JSON.stringify(["x".repeat(501), "id"])), null)
+})

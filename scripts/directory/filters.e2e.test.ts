@@ -6,11 +6,10 @@ import { getFirestore } from "firebase-admin/firestore"
 import { chromium, type Browser, type Page } from "playwright"
 
 // Run against `next build && next start` to catch production navigation regressions.
-// Fixtures only read public company projections. API requests update their normal
-// durable quota buckets; no company, user, or paid provider data is changed.
+// Only projected, public company fields are read; this suite never writes to Firestore.
 const baseUrl = process.env.DIRECTORY_TEST_URL || "http://127.0.0.1:3000"
 type StoredCompany = {
-  id: string; slug: string; name?: string; industry?: string | null; tags?: string[] | null
+  id: string; slug: string; name?: string | null; industry?: string | null; tags?: string[] | null
   employees?: number | null; batch?: string | null; vcBacker?: string | null
 }
 let browser: Browser
@@ -42,42 +41,40 @@ const isB2B = (company: StoredCompany) => Array.isArray(company.tags) && company
 const isHealthcare = (company: StoredCompany) => company.industry === "Healthcare" || company.tags?.includes("Healthcare") === true
 const hasSmallTeam = (company: StoredCompany) => typeof company.employees === "number" &&
   Number.isSafeInteger(company.employees) && company.employees >= 1 && company.employees <= 50
-const startsWithA = (company: StoredCompany) => company.slug.toLowerCase().startsWith("a") ||
-  (company.name ?? "").trim().toLowerCase().startsWith("a")
+const matchesSearch = (company: StoredCompany, query: string) => {
+  const normalized = query.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US")
+  return (company.name ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US").startsWith(normalized) ||
+    company.slug.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US").startsWith(normalized)
+}
 
 async function verify(page: Page, matches: (company: StoredCompany) => boolean) {
-  // History navigation does not cause a document load. Wait for the actual
-  // client search result instead of an already-idle document lifecycle.
-  await page.locator('[aria-busy="false"]').waitFor()
   const params = new URL(page.url()).searchParams
+  // On a direct static-page visit, the first hydrated frame uses the default
+  // model. Wait for URL-driven controls before accepting an idle result grid.
+  await page.getByRole("link", { name: params.get("sort") === "desc" ? "Z-A" : "A-Z", exact: true }).waitFor()
+  await page.locator('[aria-busy="false"]').waitFor({ state: "visible" })
   const ordered = companies.filter(matches).sort((a, b) =>
     ((a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) *
     (params.get("sort") === "desc" ? -1 : 1))
-  // The cached hero is the total directory size. Exact filtered totals are no
-  // longer computed because that required unbounded per-request scans.
-  assert.equal(Number(await page.locator("section span.text-3xl").innerText()), companies.length)
+  const pageNumber = Math.min(Number(params.get("page")) || 1, Math.max(1, Math.ceil(ordered.length / 10)))
+  assert.equal(Number(await page.locator("section span.text-3xl").innerText()), ordered.length)
   const slugs = await page.locator("a.block.h-full").evaluateAll(links =>
-    links.map(link => link.getAttribute("href")!.split("/").pop()!))
-  assert.ok(slugs.length <= 10)
-  const expected = ordered.map(company => company.slug)
-  assert.ok(slugs.every(slug => expected.includes(slug)), "Each rendered company matches all filters")
-  assert.deepEqual(slugs, [...slugs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0) * (params.get("sort") === "desc" ? -1 : 1)))
-  assert.equal(await page.getByRole("status").filter({ hasText: /Search is temporarily unavailable|Too many searches/ }).count(), 0)
+    links.map(link => link.getAttribute("href")!.split("/").pop()))
+  assert.deepEqual(slugs, ordered.slice((pageNumber - 1) * 10, pageNumber * 10).map(company => company.slug))
 }
 
 async function withPage(run: (page: Page) => Promise<void>) {
   const page = await browser.newPage()
-  // Exercise logo fallbacks without depending on external image-host access.
-  await page.route('**/_next/image?**', route => route.fulfill({ status: 404, body: '' }))
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/_next/image?**", route => route.fulfill({ status: 204 }))
   try { await run(page); assert.deepEqual(errors, [], "No browser runtime errors") }
   finally { await page.close() }
 }
 
 test("production B2B clicks and next/previous pages match only explicit Firestore tags", { timeout: 120_000 }, async () => {
   await withPage(async page => {
-    await page.goto(baseUrl, { waitUntil: "networkidle" })
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" })
     assert.match(await page.title(), /Founders Directory/)
     await page.locator("aside").getByRole("link", { name: "B2B", exact: true }).click()
     await page.waitForURL(url => url.searchParams.get("industry") === "B2B")
@@ -95,7 +92,7 @@ test("production B2B clicks and next/previous pages match only explicit Firestor
 
 test("multi-selection combines groups and survives batch, sort, search, and clearing", { timeout: 120_000 }, async () => {
   await withPage(async page => {
-    await page.goto(`${baseUrl}/?industry=B2B`, { waitUntil: "networkidle" })
+    await page.goto(`${baseUrl}/?industry=B2B`, { waitUntil: "domcontentloaded" })
     for (const [name, key, count] of [["Healthcare", "industry", 2], ["1-10", "employees", 1], ["11-50", "employees", 2]] as const) {
       await page.locator("aside").getByRole("link", { name, exact: true }).click()
       await page.waitForURL(url => url.searchParams.getAll(key).length === count)
@@ -120,20 +117,57 @@ test("multi-selection combines groups and survives batch, sort, search, and clea
     await page.locator("#search-input").press("Enter")
     await page.waitForURL(url => url.searchParams.get("q") === "a")
     for (const key of ["industry", "employees", "batch"]) assert.equal(new URL(page.url()).searchParams.getAll(key).length, 2)
-    await verify(page, company => withBatch(company) && startsWithA(company))
+    await verify(page, company => withBatch(company) && matchesSearch(company, "a"))
     await page.getByRole("button", { name: "Clear batches", exact: true }).click()
     await page.waitForURL(url => !url.searchParams.has("batch"))
-    await verify(page, company => matches(company) && startsWithA(company))
+    await verify(page, company => matches(company) && matchesSearch(company, "a"))
     await page.getByRole("link", { name: "Clear all filters", exact: true }).click()
     await page.waitForURL(url => !["industry", "employees", "batch", "vc"].some(key => url.searchParams.has(key)))
-    await verify(page, startsWithA)
+    await verify(page, company => matchesSearch(company, "a"))
   })
 })
 
-test("direct page links with invalid cursors reset instead of executing offset scans", { timeout: 120_000 }, async () => {
+test("direct page links recover from invalid cursors without losing alphabetical order", { timeout: 120_000 }, async () => {
   await withPage(async page => {
-    await page.goto(`${baseUrl}/?page=2&cursor=bad&sort=desc`, { waitUntil: "networkidle" })
+    await page.goto(`${baseUrl}/?page=2&cursor=bad&sort=desc`, { waitUntil: "domcontentloaded" })
     await verify(page, () => true)
-    assert.equal(await page.getByText("Page 1", { exact: true }).count(), 1)
+  })
+})
+
+test("rate-limited search clears loading, respects Retry-After, and recovers on retry", { timeout: 120_000 }, async () => {
+  await withPage(async page => {
+    let requests = 0
+    await page.route("**/api/directory?**", async route => {
+      requests++
+      if (requests === 1) {
+        await route.fulfill({ status: 429, headers: { "Retry-After": "1", "Cache-Control": "no-store" },
+          contentType: "text/html", body: "<html>private provider diagnostics</html>" })
+        return
+      }
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        companies: [{ id: "retry-company", slug: "retry-company", name: "Retry Company", description: "Search recovered.",
+          logoUrl: null, oneLiner: null, vcBacker: null, industry: null, employees: null, location: null, tags: [], batch: null }],
+        totalCount: 1, totalPages: 1, page: 1,
+      }) })
+    })
+    await page.goto(`${baseUrl}/?q=retry-company`, { waitUntil: "domcontentloaded" })
+    const alert = page.getByRole("alert").filter({ hasText: "Too many searches" })
+    await alert.waitFor({ state: "visible" })
+    assert.match(await alert.innerText(), /Too many searches/)
+    assert.ok(!(await page.locator("body").innerText()).includes("private provider diagnostics"))
+    assert.equal(await page.locator('[aria-busy="true"]').count(), 0)
+    assert.equal(await page.getByText("Updating directory…", { exact: true }).count(), 0)
+    assert.equal(await page.locator("a.block.h-full").count(), 0, "Failed queries hide stale default cards")
+    const retry = page.getByRole("button", { name: "Retry search", exact: true })
+    assert.equal(await retry.isDisabled(), true)
+    assert.match(await alert.getByRole("status").innerText(), /Try again in 1 second/)
+    await page.waitForFunction(() => !(document.querySelector('[role="alert"] button') as HTMLButtonElement)?.disabled)
+    await retry.click()
+    await page.getByRole("heading", { name: "Retry Company", exact: true }).waitFor({ state: "visible" })
+    assert.equal(requests, 2)
+    assert.equal(await alert.count(), 0)
+    assert.equal(await page.locator('[aria-busy="true"]').count(), 0)
+    assert.equal(await page.locator("section span.text-3xl").innerText(), "1")
+    assert.equal(new URL(page.url()).searchParams.get("q"), "retry-company")
   })
 })

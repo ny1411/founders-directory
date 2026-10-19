@@ -5,10 +5,11 @@ import { acquireLease, hashIdentity, releaseLease, requestIp, reserveQuota } fro
 import type { Company, Founder } from './types';
 import { saleshandyRequest } from './saleshandy';
 import { createEnrichmentProcessor } from './enrichment-worker';
+import { enrichmentEnabled, signEnrichmentMessage } from './enrichment-callback';
 
 const LIFETIME = 15 * 60 * 1000;
 const ref = (id: string) => adminDb.collection('contactEnrichmentJobs').doc(id);
-const enqueue = (jobId: string, step: number) => send('contact-enrichment', {jobId}, {
+const enqueue = (jobId: string, step: number) => send('contact-enrichment', signEnrichmentMessage(jobId), {
   idempotencyKey: `${jobId}:${step}`,
   delaySeconds: step ? 3 : 0,
   retentionSeconds: LIFETIME / 1000,
@@ -22,7 +23,7 @@ async function targets(ids: string[], slug: string) {
   return {company: {...companies.docs[0].data(), id: companies.docs[0].id} as Company, founders: founders.map(doc => ({...doc.data(), id: doc.id}) as Founder)};
 }
 export const enrichmentHandlers = createEnrichmentHandlers({
-  enabled: () => process.env.CONTACT_ENRICHMENT_ENABLED === 'true',
+  enabled: enrichmentEnabled,
   verify: token => adminAuth.verifyIdToken(token, true),
   quota: (uid, request) => reserveQuota(adminDb, 'enrichment-admission', uid, requestIp(request), [
     {name: 'user-minute', limit: 40, windowMs: 60_000, subject: 'user'},
@@ -63,7 +64,7 @@ export const enrichmentHandlers = createEnrichmentHandlers({
   },
 });
 export const processEnrichmentJob = createEnrichmentProcessor({
-  enabled: () => process.env.CONTACT_ENRICHMENT_ENABLED === 'true',
+  enabled: enrichmentEnabled,
   get: async id => (await ref(id).get()).data() as EnrichmentJob | undefined || null,
   update: async (id, value) => { await ref(id).update(value); },
   targets,

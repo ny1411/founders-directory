@@ -4,6 +4,13 @@ Project: `founders-directory` (`prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ`), team `ny1411
 
 ## Current rollout status
 
+Recheck on October 19, 2026: the connector can list team `ny1411`, but both the
+saved project ID and project name now return `404 Project not found`. A search
+for the repository under that team returns no projects. Confirm the current
+project ID, name, and access before using these saved staging targets; update
+the manifest and probe ownership checks if the project was recreated or moved.
+No live firewall configuration was changed during this recheck.
+
 On October 18, 2026, the authenticated Vercel connector confirmed the project and returned `404 Config not found` for **both** active and draft firewall configuration. Vercel CLI 64.5.0 is available via npm, but the execution environment has no Vercel CLI credentials; the read-only overview command failed with `No existing credentials found` and a failed login fetch. No firewall rules have been staged or published by this change. No live enforcement, preview burst test, project resume, or 24-hour observation has been performed.
 
 The connector's update operation targets `PATCH /v1/security/firewall/config`, while CLI 64.5.0 implements safe draft staging as `PATCH /v1/security/firewall/config/draft`. Do not substitute the connector update or a whole-config PUT for draft staging. These repository artifacts are ready for an authenticated operator; they do not themselves protect production.
