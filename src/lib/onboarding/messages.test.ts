@@ -141,6 +141,164 @@ test("message identities separate user, target, intent, goals, evidence, and sch
     assert.notEqual(messageKey(f.uid, "founder", variant), key);
   assert.notEqual(messageKey("other-user", "founder", state), key);
   assert.notEqual(messageKey(f.uid, "other-founder", state), key);
+  assert.notEqual(
+    messageKey(f.uid, "founder", state, { companyUpdatedAt: "new-version" }),
+    key,
+  );
+});
+
+test("DM request quotas reject before profile reads and return Retry-After", async () => {
+  const handler = createMessageHandler({
+    verifyToken: async () => ({ uid: "user" }),
+    quota: async (_uid, _request, kind) => {
+      assert.equal(kind, "request");
+      return { allowed: false, retryAfterSeconds: 42 };
+    },
+    load: async () => {
+      throw new Error("Must not read profile");
+    },
+    getResume: async () => null,
+    getTarget: async () => target,
+    getCached: async () => null,
+    save: async () => {},
+    generate: async () => {
+      throw new Error("Must not spend credits");
+    },
+  });
+  const response = await handler(request("Bearer token"));
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get("retry-after"), "42");
+  const malformed = new Request("http://localhost/api/generate-dm", {
+    method: "POST",
+    headers: { authorization: "Bearer token" },
+    body: "malformed JSON",
+  });
+  assert.equal(
+    (await handler(malformed)).status,
+    429,
+    "admission must run before JSON parsing",
+  );
+  assert.equal(malformed.bodyUsed, false);
+});
+
+test("DM rejects streamed oversized JSON before profile or provider work", async () => {
+  const f = authFixture(async () => ({ uid: "user" }));
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode(
+          JSON.stringify({
+            founderId: "founder",
+            companySlug: "earlyco",
+            padding: "x".repeat(5000),
+          }),
+        ),
+      );
+      controller.close();
+    },
+  });
+  const streamed = new Request("http://localhost/api/generate-dm", {
+    method: "POST",
+    headers: { authorization: "Bearer token" },
+    body,
+    duplex: "half",
+  } as RequestInit);
+  assert.equal(streamed.headers.has("content-length"), false);
+  assert.equal((await f.handler(streamed)).status, 413);
+  assert.equal(f.calls.load, 0);
+  assert.equal(f.calls.generate, 0);
+});
+
+test("shared DM leases prevent duplicate paid generation and release after completion", async () => {
+  const f = fixture();
+  await complete(f, "sell_services");
+  let unlockGeneration!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    unlockGeneration = resolve;
+  });
+  let started!: () => void;
+  const generating = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let lease: string | null = null;
+  let generations = 0;
+  let generationBudgets = 0;
+  let cached: string | null = null;
+  const handler = createMessageHandler({
+    verifyToken: async () => ({ uid: f.uid }),
+    load: () => f.state(),
+    getResume: async () => null,
+    getTarget: async () => target,
+    getCached: async () => cached,
+    quota: async (_uid, _request, kind) => {
+      if (kind === "generation") generationBudgets++;
+      return { allowed: true, retryAfterSeconds: 0 };
+    },
+    acquire: async () => {
+      if (lease) return null;
+      lease = "owner";
+      return lease;
+    },
+    release: async (_key, token) => {
+      assert.equal(token, "owner");
+      lease = null;
+    },
+    save: async (_key, value) => {
+      cached = value.content as string;
+      const age =
+        Date.parse(value.expiresAt as string) -
+        Date.parse(value.createdAt as string);
+      assert.ok(Math.abs(age - 86_400_000) < 1000);
+    },
+    generate: async () => {
+      generations++;
+      started();
+      await blocked;
+      return "one draft";
+    },
+  });
+  const first = handler(request("Bearer token"));
+  await generating;
+  const duplicate = await handler(request("Bearer token"));
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.headers.get("retry-after"), "5");
+  unlockGeneration();
+  assert.equal((await first).status, 200);
+  assert.equal(lease, null);
+  assert.equal((await handler(request("Bearer token"))).status, 200);
+  assert.equal(generations, 1);
+  assert.equal(generationBudgets, 1);
+});
+
+test("exhausted DM generation budgets release the lease without paid generation", async () => {
+  const f = fixture();
+  await complete(f, "sell_services");
+  let released = false;
+  const handler = createMessageHandler({
+    verifyToken: async () => ({ uid: f.uid }),
+    load: () => f.state(),
+    getResume: async () => null,
+    getTarget: async () => target,
+    getCached: async () => null,
+    quota: async (_uid, _request, kind) => ({
+      allowed: kind === "request",
+      retryAfterSeconds: 600,
+    }),
+    acquire: async () => "owner",
+    release: async () => {
+      released = true;
+    },
+    save: async () => {
+      throw new Error("Must not save");
+    },
+    generate: async () => {
+      throw new Error("Must not generate");
+    },
+  });
+  const response = await handler(request("Bearer token"));
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get("retry-after"), "600");
+  assert.equal(released, true);
 });
 
 test("real goal flows generate and cache distinct messages, including full private job evidence", async () => {
@@ -212,17 +370,39 @@ test("real goal flows generate and cache distinct messages, including full priva
 });
 
 test("missing and malformed message credentials return 401 before verification or data work", async () => {
-  for (const authorization of [undefined, "", "Basic password", "Bearer", "Bearer one two"]) {
+  for (const authorization of [
+    undefined,
+    "",
+    "Basic password",
+    "Bearer",
+    "Bearer one two",
+  ]) {
     const f = authFixture(async () => ({ uid: "authenticated-user" }));
     const response = await f.handler(request(authorization));
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { error: "Unauthorized" });
-    assert.deepEqual(f.calls, { verify: 0, load: 0, resume: 0, target: 0, cache: 0, save: 0, generate: 0 });
+    assert.deepEqual(f.calls, {
+      verify: 0,
+      load: 0,
+      resume: 0,
+      target: 0,
+      cache: 0,
+      save: 0,
+      generate: 0,
+    });
   }
 });
 
 test("invalid, expired, revoked, and disabled message credentials return 401 before data work", async () => {
-  for (const code of ["auth/argument-error", "auth/invalid-argument", "auth/invalid-id-token", "auth/id-token-expired", "auth/id-token-revoked", "auth/user-disabled", "auth/user-not-found"]) {
+  for (const code of [
+    "auth/argument-error",
+    "auth/invalid-argument",
+    "auth/invalid-id-token",
+    "auth/id-token-expired",
+    "auth/id-token-revoked",
+    "auth/user-disabled",
+    "auth/user-not-found",
+  ]) {
     const f = authFixture(async (token, revoked) => {
       assert.equal(token, "invalid-token");
       assert.equal(revoked, true);
@@ -247,11 +427,16 @@ test("authentication infrastructure failures remain safe logged 5xx errors", asy
   const logged: unknown[][] = [];
   t.mock.method(console, "error", (...args: unknown[]) => logged.push(args));
   const f = authFixture(async () => {
-    throw Object.assign(new Error("private Firebase infrastructure diagnostic"), { code: "auth/internal-error" });
+    throw Object.assign(
+      new Error("private Firebase infrastructure diagnostic"),
+      { code: "auth/internal-error" },
+    );
   });
   const response = await f.handler(request("Bearer valid-shape"));
   assert.equal(response.status, 500);
-  assert.deepEqual(await response.json(), { error: "Unable to generate a message right now." });
+  assert.deepEqual(await response.json(), {
+    error: "Unable to generate a message right now.",
+  });
   assert.equal(f.calls.load, 0);
   assert.equal(f.calls.target, 0);
   assert.equal(f.calls.generate, 0);
@@ -277,27 +462,62 @@ test("unexpected data failures remain safe logged 5xx errors", async (t) => {
 
 test("message clients classify session expiry and never display unsafe 5xx details", async () => {
   await assert.rejects(
-    readMessageGenerationResponse(Response.json({ error: "Firebase token decoding failed: private diagnostic" }, { status: 401 })),
-    (error: unknown) => error instanceof MessageGenerationError && error.failure === "auth" && /session has expired/.test(error.message) && !/Firebase|private/.test(error.message),
+    readMessageGenerationResponse(
+      Response.json(
+        { error: "Firebase token decoding failed: private diagnostic" },
+        { status: 401 },
+      ),
+    ),
+    (error: unknown) =>
+      error instanceof MessageGenerationError &&
+      error.failure === "auth" &&
+      /session has expired/.test(error.message) &&
+      !/Firebase|private/.test(error.message),
   );
   await assert.rejects(
-    readMessageGenerationResponse(Response.json({ error: "Gemini provider key leaked in private diagnostic" }, { status: 500 })),
-    (error: unknown) => error instanceof MessageGenerationError && error.failure === "request" && /try again/.test(error.message) && !/Gemini|private/.test(error.message),
+    readMessageGenerationResponse(
+      Response.json(
+        { error: "Gemini provider key leaked in private diagnostic" },
+        { status: 500 },
+      ),
+    ),
+    (error: unknown) =>
+      error instanceof MessageGenerationError &&
+      error.failure === "request" &&
+      /try again/.test(error.message) &&
+      !/Gemini|private/.test(error.message),
   );
   await assert.rejects(
-    readMessageGenerationResponse(Response.json({ error: "Review and complete your profile before generating a message." }, { status: 409 })),
-    { message: "Review and complete your profile before generating a message.", failure: "request" },
+    readMessageGenerationResponse(
+      Response.json(
+        {
+          error:
+            "Review and complete your profile before generating a message.",
+        },
+        { status: 409 },
+      ),
+    ),
+    {
+      message: "Review and complete your profile before generating a message.",
+      failure: "request",
+    },
   );
-  assert.equal(await readMessageGenerationResponse(Response.json({ dmText: "Hello" })), "Hello");
+  assert.equal(
+    await readMessageGenerationResponse(Response.json({ dmText: "Hello" })),
+    "Hello",
+  );
 });
 
 test("expired-session message UI exposes an actionable sign-in path", () => {
   let recoveries = 0;
   const tree = ColdDmErrorPanel({
     failure: "auth",
-    message: "Your session has expired. Sign in again to create a custom message.",
+    message:
+      "Your session has expired. Sign in again to create a custom message.",
     recoveringSession: false,
-    onRecoverSession: () => { recoveries += 1; },
+    onRecoverSession: () => {
+      recoveries += 1;
+    },
   });
   const nodes = elements(tree);
   assert.ok(nodes.some((node) => node.props.role === "alert"));

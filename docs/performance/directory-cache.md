@@ -22,6 +22,26 @@ from the CDN/ISR cache without invoking a Next.js Function for every request.
 5. The snapshot revalidates after one hour. Creating a company invalidates the
    `company-directory` tag immediately and revalidates `/`.
 
+## Search abuse controls
+
+The directory API keeps successful public responses CDN-cacheable. On cache
+misses, a durable per-IP quota (60 searches per minute) runs before loading the
+shared snapshot or computing a page. Cache hits bypass the origin and quota;
+edge firewall rules cover traffic before it reaches the application. Quota
+rejections return 429 with `Retry-After` and `Cache-Control: no-store`. Quota or
+snapshot failures fail closed with an uncacheable 503 response.
+
+The query string is capped at 4,096 characters before any quota/database work.
+Search text is whitespace/case normalized and capped at 100 characters; each
+facet accepts at most ten unique, sorted, known labels. Only the seven supported
+parameters enter the query model. Page bounds and exact filtered counts continue
+to come from the cached snapshot, preserving existing pagination behavior.
+
+This snapshot model does not need directory facet metadata or composite index
+maintenance. The previous `metadata/directory-options` document is no longer
+read or updated; existing live data is left untouched. Historical composite
+index deployment permission failures do not block this directory implementation.
+
 This replaces the former request-time candidate queries and in-memory server
 filtering. Those queries could read broad candidate sets for every URL variant
 and required several Firestore composite indexes. The static snapshot needs

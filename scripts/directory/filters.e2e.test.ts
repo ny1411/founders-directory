@@ -48,8 +48,11 @@ const matchesSearch = (company: StoredCompany, query: string) => {
 }
 
 async function verify(page: Page, matches: (company: StoredCompany) => boolean) {
-  await page.locator('[aria-busy="false"]').waitFor({ state: "visible" })
   const params = new URL(page.url()).searchParams
+  // On a direct static-page visit, the first hydrated frame uses the default
+  // model. Wait for URL-driven controls before accepting an idle result grid.
+  await page.getByRole("link", { name: params.get("sort") === "desc" ? "Z-A" : "A-Z", exact: true }).waitFor()
+  await page.locator('[aria-busy="false"]').waitFor({ state: "visible" })
   const ordered = companies.filter(matches).sort((a, b) =>
     ((a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) *
     (params.get("sort") === "desc" ? -1 : 1))
@@ -128,5 +131,43 @@ test("direct page links recover from invalid cursors without losing alphabetical
   await withPage(async page => {
     await page.goto(`${baseUrl}/?page=2&cursor=bad&sort=desc`, { waitUntil: "domcontentloaded" })
     await verify(page, () => true)
+  })
+})
+
+test("rate-limited search clears loading, respects Retry-After, and recovers on retry", { timeout: 120_000 }, async () => {
+  await withPage(async page => {
+    let requests = 0
+    await page.route("**/api/directory?**", async route => {
+      requests++
+      if (requests === 1) {
+        await route.fulfill({ status: 429, headers: { "Retry-After": "1", "Cache-Control": "no-store" },
+          contentType: "text/html", body: "<html>private provider diagnostics</html>" })
+        return
+      }
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        companies: [{ id: "retry-company", slug: "retry-company", name: "Retry Company", description: "Search recovered.",
+          logoUrl: null, oneLiner: null, vcBacker: null, industry: null, employees: null, location: null, tags: [], batch: null }],
+        totalCount: 1, totalPages: 1, page: 1,
+      }) })
+    })
+    await page.goto(`${baseUrl}/?q=retry-company`, { waitUntil: "domcontentloaded" })
+    const alert = page.getByRole("alert").filter({ hasText: "Too many searches" })
+    await alert.waitFor({ state: "visible" })
+    assert.match(await alert.innerText(), /Too many searches/)
+    assert.ok(!(await page.locator("body").innerText()).includes("private provider diagnostics"))
+    assert.equal(await page.locator('[aria-busy="true"]').count(), 0)
+    assert.equal(await page.getByText("Updating directory…", { exact: true }).count(), 0)
+    assert.equal(await page.locator("a.block.h-full").count(), 0, "Failed queries hide stale default cards")
+    const retry = page.getByRole("button", { name: "Retry search", exact: true })
+    assert.equal(await retry.isDisabled(), true)
+    assert.match(await alert.getByRole("status").innerText(), /Try again in 1 second/)
+    await page.waitForFunction(() => !(document.querySelector('[role="alert"] button') as HTMLButtonElement)?.disabled)
+    await retry.click()
+    await page.getByRole("heading", { name: "Retry Company", exact: true }).waitFor({ state: "visible" })
+    assert.equal(requests, 2)
+    assert.equal(await alert.count(), 0)
+    assert.equal(await page.locator('[aria-busy="true"]').count(), 0)
+    assert.equal(await page.locator("section span.text-3xl").innerText(), "1")
+    assert.equal(new URL(page.url()).searchParams.get("q"), "retry-company")
   })
 })

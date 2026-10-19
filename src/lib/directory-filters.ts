@@ -22,12 +22,12 @@ export function scalarParam(value: string | string[] | undefined): string {
 
 export function parseSelections(value: string | string[] | null | undefined, options: readonly string[]): string[] {
   const values = typeof value === "string" ? [value] : value ?? []
-  return [...new Set(values.filter(item => options.includes(item)))]
+  return [...new Set(values.filter(item => options.includes(item)))].sort().slice(0, 10)
 }
 
 export function parseDirectoryFilters(params: SearchParams, options: { batches: string[]; vcs: string[] }): DirectoryFilters {
   return {
-    q: scalarParam(params.q).trim(),
+    q: normalizeCompanySearch(scalarParam(params.q)).slice(0, 100),
     sort: scalarParam(params.sort) === "desc" ? "desc" : "asc",
     industry: parseSelections(params.industry, INDUSTRIES),
     employees: parseSelections(params.employees, EMPLOYEE_RANGES),
@@ -44,9 +44,11 @@ export function parsePage(value: string | string[] | undefined): number {
 
 export function parseCursor(value: string | string[] | undefined): [string, string] | null {
   try {
-    const cursor: unknown = JSON.parse(scalarParam(value))
+    const raw = scalarParam(value)
+    if (raw.length > 2000) return null
+    const cursor: unknown = JSON.parse(raw)
     return Array.isArray(cursor) && cursor.length === 2 && cursor.every(item => typeof item === "string") &&
-      cursor[1].length > 0 && !cursor[1].includes("/")
+      cursor.every(item => item.length <= 500) && cursor[1].length > 0 && !cursor[1].includes("/")
       ? cursor as [string, string] : null
   } catch {
     return null

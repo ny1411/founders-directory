@@ -36,6 +36,9 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
   const [enrichError, setEnrichError] = useState('');
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const enrichmentRequestRef = useRef<{founderId: string; key: string} | null>(null);
+  const enrichmentAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => enrichmentAbortRef.current?.abort(), []);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -176,16 +179,41 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
     setEnrichError('');
 
     try {
+      if (!user) throw new Error('Sign in again to find contact information.');
+      const token = await user.getIdToken();
+      if (enrichmentRequestRef.current?.founderId !== founderId) enrichmentRequestRef.current = {founderId, key: crypto.randomUUID()};
+      const controller = new AbortController();
+      enrichmentAbortRef.current = controller;
       const res = await fetch('/api/enrich-contact', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'Idempotency-Key': enrichmentRequestRef.current.key,
         },
-        body: JSON.stringify({ founderIds: [founderId] })
+        body: JSON.stringify({ founderIds: [founderId], companySlug }),
+        signal: controller.signal,
       });
 
       const data = await res.json();
-      const enrichedEmail = data.founder?.enrichment?.workEmail || data.founder?.enrichment?.personalEmail;
+      if (!res.ok) throw new Error(data.error || 'Unable to start contact lookup.');
+      // POST returns metadata only, including for completed idempotent retries.
+      // Always fetch the authenticated owner-scoped status at least once.
+      let job = {...data, status: 'queued'};
+      for (let attempt = 0; attempt < 45; attempt++) {
+        if (job.status === 'completed' || job.status === 'failed') break;
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+          const timer = setTimeout(() => { controller.signal.removeEventListener('abort', onAbort); resolve(); }, 3000);
+          controller.signal.addEventListener('abort', onAbort, {once: true});
+        });
+        const response = await fetch(data.statusUrl, {headers: {Authorization: `Bearer ${await user.getIdToken()}`}, signal: controller.signal, cache: 'no-store'});
+        job = await response.json();
+        if (!response.ok) throw new Error(job.error || 'Contact lookup temporarily unavailable.');
+      }
+      if (job.status === 'failed') throw new Error('Contact lookup failed. Please try again later.');
+      if (job.status !== 'completed') throw new Error('Contact lookup is still running. Click Email again to check the same job.');
+      const enrichedEmail = job.results?.[0]?.workEmail;
 
       if (enrichedEmail) {
         setLocalEmail(enrichedEmail);
@@ -194,8 +222,9 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
       } else {
         setEnrichError("We couldn't find contact information for this founder.");
       }
-    } catch {
-      setEnrichError("We couldn't find contact information for this founder.");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setEnrichError(error instanceof Error ? error.message : "We couldn't find contact information for this founder.");
     } finally {
       setEnriching(false);
     }

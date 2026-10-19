@@ -3,11 +3,51 @@ import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { createMessageHandler } from "@/lib/onboarding/messages";
 import { OnboardingStore } from "@/lib/onboarding/store";
 import type { Company, Founder } from "@/lib/types";
+import {
+  acquireLease,
+  releaseLease,
+  requestIp,
+  reserveQuota,
+} from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 const store = new OnboardingStore(adminDb);
 
 export const POST = createMessageHandler({
+  quota: (uid, request, kind) =>
+    reserveQuota(
+      adminDb,
+      `generate-dm-${kind}`,
+      uid,
+      requestIp(request),
+      kind === "request"
+        ? [
+            {
+              name: "user-minute",
+              limit: 30,
+              windowMs: 60_000,
+              subject: "user",
+            },
+            { name: "ip-minute", limit: 60, windowMs: 60_000, subject: "ip" },
+          ]
+        : [
+            {
+              name: "user-hour",
+              limit: 10,
+              windowMs: 3_600_000,
+              subject: "user",
+            },
+            {
+              name: "user-day",
+              limit: 30,
+              windowMs: 86_400_000,
+              subject: "user",
+            },
+            { name: "ip-day", limit: 60, windowMs: 86_400_000, subject: "ip" },
+          ],
+    ),
+  acquire: (key) => acquireLease(adminDb, `generate-dm:${key}`, 120_000),
+  release: (key, token) => releaseLease(adminDb, `generate-dm:${key}`, token),
   verifyToken: (token, revoked) => adminAuth.verifyIdToken(token, revoked),
   load: (uid) => store.load(uid),
   getResume: (uid, state) => store.getResumeContext(uid, state),
@@ -34,9 +74,16 @@ export const POST = createMessageHandler({
       founder: { ...founderDocument.data(), id: founderDocument.id } as Founder,
     };
   },
-  getCached: async (key) =>
-    (await adminDb.collection("generatedMessages").doc(key).get()).data()
-      ?.content || null,
+  getCached: async (key) => {
+    const draft = (
+      await adminDb.collection("generatedMessages").doc(key).get()
+    ).data();
+    return draft &&
+      typeof draft.expiresAt === "string" &&
+      Date.parse(draft.expiresAt) > Date.now()
+      ? draft.content || null
+      : null;
+  },
   save: async (key, value) => {
     await adminDb.collection("generatedMessages").doc(key).set(value);
   },
@@ -47,7 +94,10 @@ export const POST = createMessageHandler({
       }).models.generateContent({
         model: "gemini-3.5-flash",
         contents: JSON.stringify(data),
-        config: { systemInstruction: instructions },
+        config: {
+          systemInstruction: instructions,
+          httpOptions: { timeout: 60_000 },
+        },
       })
     ).text,
 });

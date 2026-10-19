@@ -26,6 +26,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react"
 
 const subscribeToHydration = () => () => undefined
+type DirectoryError = { message: string; retryAt: number | null }
 
 export function Directory({ initialData }: { initialData: DirectoryInitialData }) {
   const router = useRouter()
@@ -43,11 +44,15 @@ export function Directory({ initialData }: { initialData: DirectoryInitialData }
   const requestedPage = parsePage(rawParams.page)
   if (requestedPage > 1) params.set("page", String(requestedPage))
   const requestQuery = params.toString()
-  const [remote, setRemote] = useState<{ query: string; data: DirectoryPageData }>({
+  const [remote, setRemote] = useState<{ query: string; data: DirectoryPageData; error?: DirectoryError }>({
     query: "",
     data: initialData,
   })
+  const [attempt, setAttempt] = useState(0)
+  const [now, setNow] = useState(0)
   const loading = Boolean(requestQuery) && remote.query !== requestQuery
+  const error = requestQuery && remote.query === requestQuery ? remote.error : undefined
+  const retrySeconds = error?.retryAt ? Math.max(0, Math.ceil((error.retryAt - now) / 1000)) : 0
   const displayedResult = !requestQuery || loading ? initialData : remote.data
 
   useEffect(() => {
@@ -55,17 +60,30 @@ export function Directory({ initialData }: { initialData: DirectoryInitialData }
 
     const controller = new AbortController()
     void fetch(`/api/directory?${requestQuery}`, { signal: controller.signal })
-      .then(response => {
-        if (!response.ok) throw new Error(`Directory request failed with ${response.status}`)
-        return response.json() as Promise<DirectoryPageData>
+      .then(async response => {
+        if (!response.ok) {
+          if (controller.signal.aborted) return
+          const failure = directoryError(response)
+          setNow(Date.now())
+          setRemote({ query: requestQuery, data: initialData, error: failure })
+          return
+        }
+        const data = await response.json() as DirectoryPageData
+        if (!controller.signal.aborted) setRemote({ query: requestQuery, data })
       })
-      .then(data => setRemote({ query: requestQuery, data }))
-      .catch(error => {
-        if (!controller.signal.aborted) console.error("Directory search failed", error)
+      .catch(() => {
+        if (!controller.signal.aborted) setRemote({ query: requestQuery, data: initialData,
+          error: { message: "Search is temporarily unavailable. Please try again.", retryAt: null } })
       })
 
     return () => controller.abort()
-  }, [initialData, requestQuery])
+  }, [initialData, requestQuery, attempt])
+
+  useEffect(() => {
+    if (!error?.retryAt || retrySeconds === 0) return
+    const timer = window.setTimeout(() => setNow(Date.now()), 1000)
+    return () => window.clearTimeout(timer)
+  }, [error?.retryAt, retrySeconds])
 
   const buildUrl = (overrides: Record<string, string | string[] | number | null>) => {
     const query = updateDirectoryParams(params, overrides).toString()
@@ -178,7 +196,18 @@ export function Directory({ initialData }: { initialData: DirectoryInitialData }
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {error && (
+            <div role="alert" className="rounded-2xl border border-border p-6 text-sm text-secondary-foreground">
+              <p>{error.message}</p>
+              {retrySeconds > 0 && <p role="status">Try again in {retrySeconds} {retrySeconds === 1 ? "second" : "seconds"}.</p>}
+              <button type="button" disabled={retrySeconds > 0}
+                className={buttonVariants({ variant: "outline", className: "mt-4 rounded-full disabled:opacity-50" })}
+                onClick={() => { setRemote(previous => ({ ...previous, query: "", error: undefined })); setAttempt(value => value + 1) }}>
+                Retry search
+              </button>
+            </div>
+          )}
+          {!error && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {displayedResult.companies.map(company => (
               <Link key={company.id} href={`/company/${company.slug}`} className="block h-full group">
                 <Card className="h-full bg-card border border-border rounded-2xl p-6 flex flex-col gap-4 transition-all duration-200 hover:bg-accent/50 hover:border-foreground/20 shadow-none">
@@ -242,11 +271,11 @@ export function Directory({ initialData }: { initialData: DirectoryInitialData }
                 </Link>
               </div>
             )}
-          </div>
+          </div>}
 
           {requestQuery && loading && <p className="text-center text-xs text-muted-foreground">Updating directory…</p>}
 
-          {displayedResult.totalPages > 1 && (
+          {!error && displayedResult.totalPages > 1 && (
             <div className="flex items-center justify-center gap-4 mt-8">
               <Link
                 href={displayedResult.page > 1 ? buildUrl({ page: displayedResult.page - 1 }) : "#"}
@@ -271,6 +300,20 @@ export function Directory({ initialData }: { initialData: DirectoryInitialData }
       </div>
     </>
   )
+}
+
+function directoryError(response: Response): DirectoryError {
+  const message = response.status === 429 ? "Too many searches. Please wait before trying again."
+    : response.status === 400 ? "This search is too long. Shorten it and try again."
+      : "Search is temporarily unavailable. Please try again."
+  // Do not display server response bodies: proxies/providers can return HTML or
+  // internal diagnostics. Honor either supported Retry-After format, bounded to
+  // one day so malformed upstream headers cannot disable retries indefinitely.
+  const header = response.headers.get("Retry-After")
+  const seconds = header && /^\d+$/.test(header) ? Number(header) : null
+  const deadline = seconds !== null ? Date.now() + seconds * 1000 : header ? Date.parse(header) : NaN
+  const retryAt = Number.isFinite(deadline) ? Math.min(Date.now() + 86400000, Math.max(Date.now(), deadline)) : null
+  return { message, retryAt }
 }
 
 function toSearchParams(params: ReturnType<typeof useSearchParams>): SearchParams {
