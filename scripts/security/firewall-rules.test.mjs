@@ -28,6 +28,7 @@ test('reruns preserve other rules and skip identical rules; conflicting tuned ru
   tuned.action.mitigate.rateLimit.action = 'rate_limit';
   assert.throws(() => missingRules([tuned]), /differs/);
   assert.throws(() => missingRules([desired[0], desired[0]]), /Duplicate/);
+  assert.throws(() => missingRules([{ name: 'FD #40 observe homepage' }]), /Legacy homepage/);
 });
 
 test('API optional defaults and property order do not duplicate staged rules', () => {
@@ -47,6 +48,8 @@ test('profile aliases share one write budget and public routes do not match all 
   assert.deepEqual(profile.conditionGroup[0].conditions[1].value, ['PATCH', 'POST']);
   const homepage = rules.find(rule => rule.name.endsWith('homepage'));
   assert.deepEqual(homepage.conditionGroup[0].conditions[2], { type: 'path', op: 'eq', value: '/' });
+  assert.equal(homepage.name, 'FD #35 observe homepage');
+  assert.equal(homepage.action.mitigate.rateLimit.limit, 100);
   const enrichment = rules.find(rule => rule.name.endsWith('enrichment'));
   assert.equal(enrichment.action.mitigate.rateLimit.limit, 10);
 });

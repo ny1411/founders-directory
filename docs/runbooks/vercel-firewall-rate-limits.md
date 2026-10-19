@@ -1,4 +1,4 @@
-# Vercel Firewall rate limits (#40)
+# Vercel Firewall rate limits (#35, #40)
 
 Project: `founders-directory` (`prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ`), team `ny1411` (`team_uk1Ii5k2P5wcgjeFoxW9ojfC`).
 
@@ -17,11 +17,11 @@ The connector's update operation targets `PATCH /v1/security/firewall/config`, w
 
 ## Observation thresholds
 
-All entries use a 600-second fixed window, counting by IP, scoped to Production. The exceeded action is `log`. These are issue #40's proposed starting points; tune against legitimate traffic and shared-IP users before enforcement. Counters are per Vercel region, so they are not a global spending cap.
+All entries use a 600-second fixed window, counting by IP, scoped to Production. The exceeded action is `log`. The homepage threshold starts at issue #35's suggested 100 requests per 10 minutes; API thresholds are issue #40's proposed starting points. Tune against legitimate traffic and shared-IP users before enforcement. Counters are per Vercel region, so they are not a global spending cap.
 
 | Request | Requests / 10 minutes | Candidate enforcement after review |
 | --- | ---: | --- |
-| `GET /` (exact) | 60 | 429; challenge repeated automation |
+| `GET /` (exact) | 100 | 429; challenge repeated automation |
 | `GET /company/*` | 120 | Challenge after crawler/link-preview review |
 | `POST /api/enrich-contact` | 10 | 429 |
 | `GET /api/enrich-contact/*` job status | 120 | 429 |
@@ -33,7 +33,12 @@ All entries use a 600-second fixed window, counting by IP, scoped to Production.
 | `PATCH` or `POST /api/profile` (shared budget) | 30 | 429 |
 | `GET /api/directory` | 60 | 429 |
 
-`scripts/security/firewall-rules.mjs` is the source of truth. The directory endpoint introduced in #36 has its own bucket. Queue callbacks and static assets are excluded. Do not add a broad `/api/*` quota, spoofable user-agent whitelist, Android/Chrome Mobile deny, or shared-JA4 deny. Authentication, durable per-user quotas, deduplication, and provider budgets from #38 remain necessary against distributed traffic.
+`scripts/security/firewall-rules.mjs` is the source of truth. The homepage rule is named `FD #35 observe homepage`; the other rules retain `FD #40` names. The directory endpoint introduced in #36 has its own bucket. Queue callbacks and static assets are excluded. Do not add a broad `/api/*` quota, spoofable user-agent whitelist, Android/Chrome Mobile deny, or shared-JA4 deny. Authentication, durable per-user quotas, deduplication, and provider budgets from #38 remain necessary against distributed traffic. See [traffic-abuse.md](traffic-abuse.md) for the incident response checklist.
+
+If the older `FD #40 observe homepage` rule was previously staged or published,
+the staging script stops. Inspect its existing action and conditions, then
+deliberately migrate or remove it through a reviewed draft before staging
+`FD #35 observe homepage`; two overlapping homepage limits would be confusing.
 
 ## Stage and inspect
 
@@ -52,7 +57,7 @@ The default script only prints the proposed rules. `--stage` reads active/draft 
 Inspect every generated rule and the **entire** draft, including unrelated changes. For example:
 
 ```bash
-vercel --scope ny1411 firewall rules inspect "FD #40 observe homepage" --project prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ --json
+vercel --scope ny1411 firewall rules inspect "FD #35 observe homepage" --project prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ --json
 vercel --scope ny1411 firewall rules list --project prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ --expand --json
 vercel --scope ny1411 firewall diff --project prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ --json
 ```
@@ -92,7 +97,7 @@ After Preview verification **and** owner review of Production observations, stag
 Prefer changing the affected rate limit's exceeded action back to `log`; this preserves monitoring. Disabling a named rule is the alternative. Never discard unrelated drafts.
 
 ```bash
-vercel --scope ny1411 firewall rules edit "FD #40 observe homepage" --project prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ --rate-limit-action log --yes
+vercel --scope ny1411 firewall rules edit "FD #35 observe homepage" --project prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ --rate-limit-action log --yes
 vercel --scope ny1411 firewall diff --project prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ
 # Owner reviews and publishes rollback.
 vercel --scope ny1411 firewall publish --project prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ --yes

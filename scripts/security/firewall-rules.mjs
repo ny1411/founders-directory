@@ -2,9 +2,9 @@ export const projectId = 'prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ';
 export const teamId = 'team_uk1Ii5k2P5wcgjeFoxW9ojfC';
 export const teamSlug = 'ny1411';
 
-// #40 starting points, not measured safe production enforcement thresholds.
+// #35 homepage and #40 API starting points, not measured safe enforcement thresholds.
 const definitions = [
-  ['homepage', ['GET'], '/', 'eq', 60],
+  ['homepage', ['GET'], '/', 'eq', 100],
   ['company', ['GET'], '/company/', 'pre', 120],
   ['enrichment', ['POST'], '/api/enrich-contact', 'eq', 10],
   ['enrichment-status', ['GET'], '/api/enrich-contact/', 'pre', 120],
@@ -19,9 +19,9 @@ const definitions = [
 
 export function observationRules() {
   return definitions.map(([key, methods, path, op, limit]) => ({
-    name: `FD #40 observe ${key}`,
+    name: `FD #${key === 'homepage' ? '35' : '40'} observe ${key}`,
     active: true,
-    description: 'Issue #40: production observation only; review traffic before preview enforcement.',
+    description: `Issue #${key === 'homepage' ? '35' : '40'}: production observation only; review traffic before preview enforcement.`,
     conditionGroup: [{ conditions: [
       { type: 'environment', op: 'eq', value: 'production' },
       { type: 'method', op: methods.length === 1 ? 'eq' : 'inc', value: methods.length === 1 ? methods[0] : methods },
@@ -36,6 +36,9 @@ export function observationRules() {
 // Leave existing rules/drafts in place, and refuse to revert a rule an owner has
 // already tuned or enforced. Safe to re-run after a partially completed batch.
 export function missingRules(existing, desired = observationRules()) {
+  if (existing.some(rule => rule.name === 'FD #40 observe homepage')) {
+    throw new Error('Legacy homepage rule exists; inspect or migrate it before staging #35 to avoid overlapping limits.');
+  }
   return desired.filter(rule => {
     const matches = existing.filter(item => item.name === rule.name);
     if (matches.length > 1) throw new Error(`Duplicate rule name: ${rule.name}`);
