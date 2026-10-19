@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { BotIdProtection } from '@/components/bot-id-protection'
 
 export default function NewCompanyPage() {
   const [founderCount, setFounderCount] = useState(1)
@@ -53,6 +54,7 @@ export default function NewCompanyPage() {
 
   return (
     <div className="max-w-4xl mx-auto flex flex-col gap-8 pb-20">
+      <BotIdProtection />
       <div>
         <Link href="/" className={buttonVariants({ variant: "ghost", className: "mb-4 -ml-4" })}>
           ← Back to Directory

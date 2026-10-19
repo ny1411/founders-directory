@@ -115,6 +115,14 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
           signal: controller.signal,
         });
 
+        if (res.status === 403) {
+          const payload: unknown = await res.json().catch(() => null);
+          const message = payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+            ? payload.error
+            : 'We could not verify this browser request. Refresh the page and try again.';
+          throw new MessageGenerationError(message, 'request');
+        }
+
         const message = await readMessageGenerationResponse(res);
         if (active) setDmText(message);
       } catch (err) {

@@ -8,15 +8,17 @@ function fixture() {
   let allowed = true;
   let authorized = true;
   let captured: string[] = [];
-  const jobs = new Map<string, {jobId: string; status: string}>();
+  const jobs = new Map<string, {founderIds: string[]; companySlug: string; job: {jobId: string; status: string}}>();
   const handlers = createEnrichmentHandlers({
     verify: async () => ({uid: 'owner'}),
     quota: async () => ({allowed, retryAfterSeconds: 40}),
     authorize: async () => authorized,
-    start: async (_uid, ids, _slug, key) => {
+    start: async (_uid, ids, slug, key) => {
       captured = ids;
-      if (!jobs.has(key)) { starts++; jobs.set(key, {jobId: 'a'.repeat(64), status: 'queued'}); }
-      return jobs.get(key)!;
+      const existing = jobs.get(key);
+      if (existing && (existing.companySlug !== slug || existing.founderIds.length !== ids.length || existing.founderIds.some((id, index) => id !== ids[index]))) return {conflict: true as const};
+      if (!existing) { starts++; jobs.set(key, {founderIds: ids, companySlug: slug, job: {jobId: 'a'.repeat(64), status: 'queued'}}); }
+      return jobs.get(key)!.job;
     },
     status: async () => null,
   });
@@ -43,7 +45,15 @@ test('deduplicates IDs and idempotent retries return same job', async () => {
   const f = fixture();
   assert.equal((await f.handlers.POST(request({founderIds: ['two', 'one', 'one'], companySlug: 'company'}))).status, 202);
   assert.deepEqual(f.ids(), ['one', 'two']);
+  assert.equal((await f.handlers.POST(request({founderIds: ['one', 'two'], companySlug: 'company'}))).status, 202);
+  assert.equal(f.starts(), 1);
+});
+test('reusing an idempotency key with different input cannot start more paid work', async () => {
+  const f = fixture();
   assert.equal((await f.handlers.POST(request())).status, 202);
+  const conflict = await f.handlers.POST(request({founderIds: ['two'], companySlug: 'company'}));
+  assert.equal(conflict.status, 409);
+  assert.match((await conflict.json()).error, /idempotency key/i);
   assert.equal(f.starts(), 1);
 });
 test('unauthorized targets and foreign jobs cannot be read', async () => {

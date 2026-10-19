@@ -14,13 +14,14 @@
     "test:onboarding:browser": "tsx --test scripts/onboarding/*.browser.test.ts",
     "test:filters:e2e": "tsx --test scripts/directory/filters.e2e.test.ts",
     "test:profile": "tsx --test scripts/profile-loading.test.tsx",
-    "test:security": "tsx --test scripts/security/*.test.ts src/lib/enrichment-*.test.ts src/lib/rate-limit.test.ts src/lib/onboarding/messages.test.ts && node --test scripts/security/firewall-rules.test.mjs"
+    "test:security": "tsx --test scripts/security/*.test.ts src/lib/enrichment-*.test.ts src/lib/observability.test.ts src/lib/rate-limit.test.ts src/lib/onboarding/messages.test.ts && node --test scripts/security/firewall-rules.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
     "@google/genai": "^2.11.0",
     "@vercel/analytics": "^2.0.1",
     "@vercel/queue": "^0.8.0",
+    "botid": "^1.5.11",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^12.16.0",

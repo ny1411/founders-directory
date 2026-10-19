@@ -3,11 +3,13 @@ import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { createResumeExtractionHandler } from '@/lib/resume-extraction-handler';
 import { reserveResumeExtractionAttempt } from '@/lib/resume-extraction-usage';
 import { OnboardingStore } from '@/lib/onboarding/store';
+import { createBotProtectedPost } from '@/lib/bot-verification';
+import { instrumentApiRoute } from '@/lib/observability-runtime';
 
 export const runtime = 'nodejs';
 const onboardingStore = new OnboardingStore(adminDb);
 
-export const POST = createResumeExtractionHandler({
+const extractResume = createResumeExtractionHandler({
   verifyToken: (token) => adminAuth.verifyIdToken(token, true),
   authorizeUpload: async (uid) => (await onboardingStore.load(uid)).goal?.type === 'job',
   reserveAttempt: (uid) => reserveResumeExtractionAttempt(adminDb, uid),
@@ -144,3 +146,17 @@ Structure the JSON as follows:
   },
   persist: (uid, parsed, hash) => onboardingStore.saveResume(uid, parsed, hash),
 });
+
+const protectedPost = createBotProtectedPost({
+  route: '/api/extract-resume',
+  verifyToken: (token) => adminAuth.verifyIdToken(token, true),
+  handler: extractResume,
+  unauthorizedMessage: 'Sign in again to upload your resume.',
+});
+
+export const POST = instrumentApiRoute({
+  route: '/api/extract-resume',
+  event: 'resume_extraction',
+  durationMetric: 'resume_extraction.duration_ms',
+  provider: 'gemini',
+}, protectedPost);

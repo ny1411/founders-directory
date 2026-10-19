@@ -52,6 +52,7 @@ function fixture(options: { refreshError?: boolean; pending?: boolean; error?: s
       if (name === '@/components/ui/button') return { Button: 'button', buttonVariants: () => '' };
       if (name === '@/components/ui/card') return { Card: 'div', CardHeader: 'div', CardTitle: 'h2', CardContent: 'div' };
       if (name === '@/components/ui/input') return { Input: 'input' };
+      if (name === '@/components/bot-id-protection') return { BotIdProtection: () => null };
       throw new Error(`Unexpected import: ${name}`);
     },
   });

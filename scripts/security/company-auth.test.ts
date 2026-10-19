@@ -15,6 +15,7 @@ const compiledAction = ts.transpileModule(actionSource, {
 type FixtureOptions = {
   verify?: (token: string, checkRevoked: boolean) => Promise<unknown>;
   failCommit?: boolean;
+  botResult?: { allowed: boolean; message?: string };
 };
 
 // Execute the real server action with in-memory Firebase boundaries only.
@@ -60,10 +61,17 @@ function fixture(options: FixtureOptions = {}) {
         },
       };
       if (name === '@/lib/directory-cache') return { DIRECTORY_CACHE_TAG: 'company-directory' };
+      if (name === '@/lib/bot-verification') return {
+        async verifyBotRequest() {
+          operations.push('bot');
+          return options.botResult ?? { allowed: true, outcome: 'allowed' };
+        },
+      };
       if (name === 'next/cache') return {
         revalidatePath: (path: string) => operations.push(`revalidate:${path}`),
         revalidateTag: (tag: string) => operations.push(`revalidate-tag:${tag}`),
       };
+      if (name === 'next/headers') return { headers: async () => new Headers() };
       if (name === 'next/navigation') return { redirect };
       throw new Error(`Unexpected import: ${name}`);
     },
@@ -111,6 +119,19 @@ test('Firestore is untouched until identity verification resolves', async () => 
   allowVerification();
   await assert.rejects(result, /NEXT_REDIRECT/);
   assert.equal(action.operations[1], 'verified');
+});
+
+test('BotID rejection happens after authentication and before any database work', async () => {
+  const action = fixture({
+    botResult: {
+      allowed: false,
+      message: 'We could not verify this browser request. Refresh the page and try again.',
+    },
+  });
+  const result = await action.createCompany(submission(), 'fresh-token');
+  assert.equal(result.error, 'We could not verify this browser request. Refresh the page and try again.');
+  assert.deepEqual(action.operations, ['verify', 'verified', 'bot']);
+  assert.deepEqual(action.writes, []);
 });
 
 test('an ordinary authenticated user saves the company and founders once and preserves Next redirect', async () => {

@@ -27,6 +27,9 @@ function fixture(options: { denied?: boolean; failQuota?: boolean; failSnapshot?
           return { allowed: !options.denied, retryAfterSeconds: 42 };
         },
       };
+      if (name === '@/lib/observability-runtime') return {
+        instrumentApiRoute: (_config: unknown, handler: (request: Request) => Promise<Response>) => handler,
+      };
       if (name === '@/lib/directory-query') return {
         getDirectorySnapshot: async () => {
           operations.push('snapshot');
