@@ -31,11 +31,31 @@ edge firewall rules cover traffic before it reaches the application. Quota
 rejections return 429 with `Retry-After` and `Cache-Control: no-store`. Quota or
 snapshot failures fail closed with an uncacheable 503 response.
 
-The query string is capped at 4,096 characters before any quota/database work.
-Search text is whitespace/case normalized and capped at 100 characters; each
-facet accepts at most ten unique, sorted, known labels. Only the seven supported
-parameters enter the query model. Page bounds and exact filtered counts continue
-to come from the cached snapshot, preserving existing pagination behavior.
+The API enforces a request schema before quota or database work. The complete
+URL is capped at 8,192 characters and its query string at 4,096 characters.
+Only `q`, `sort`, `industry`, `employees`, `batch`, `vc`, and `page` are accepted;
+unknown keys, repeated scalar keys, invalid static labels, and empty facets get
+an uncacheable 400 response. Search is capped at 100 decoded characters, then
+whitespace is collapsed and case is normalized. `sort` is `asc` or `desc`.
+`page` is a canonical decimal integer from 1 through 500, matching the
+5,000-record snapshot and ten-record page caps. Each facet accepts up to ten
+input values and all facets together accept at most twenty distinct selections.
+Industry labels accept case variants; stored batch and VC labels retain their
+exact case. Facets are deduplicated and sorted. Default `sort=asc` and `page=1`
+are omitted.
+
+Valid but noncanonical URLs receive a 307 redirect with `Cache-Control:
+no-store` before quota or snapshot work. The canonical URL uses a fixed key
+order and `URLSearchParams` encoding, including `+` for spaces. Canonical
+successful responses have `public, s-maxage=3600,
+stale-while-revalidate=86400`; 400, 429, and 503 responses have `no-store`.
+The browser builds canonical requests, but the server repeats validation.
+Page bounds and exact filtered counts continue to come from the cached
+snapshot, preserving pagination behavior.
+
+This does not eliminate unique valid searches from distributed clients.
+Firewall rate limits and anomaly monitoring remain necessary. Do not use raw
+queries as metric dimensions or server cache keys.
 
 This snapshot model does not need directory facet metadata or composite index
 maintenance. The previous `metadata/directory-options` document is no longer

@@ -1,26 +1,31 @@
 import { buildDirectoryPage, getDirectorySnapshot } from "@/lib/directory-query"
-import type { SearchParams } from "@/lib/directory-filters"
+import { parseDirectoryRequest } from "@/lib/directory-request"
 import { adminDb } from "@/lib/firebase-admin"
 import { requestIp, reserveQuota } from "@/lib/rate-limit"
 import { instrumentApiRoute } from "@/lib/observability-runtime"
 
 export const dynamic = "force-dynamic"
 
-const ALLOWED_PARAMS = new Set(["q", "sort", "industry", "employees", "batch", "vc", "page"])
-
 async function directoryGet(request: Request) {
-  const url = new URL(request.url)
-  if (url.search.length > 4096) {
-    return Response.json({ error: "Query is too long." }, {
+  if (request.url.length > 8192) {
+    return Response.json({ error: "URL is too long." }, {
       status: 400, headers: { "Cache-Control": "no-store" },
     })
   }
-  const params: SearchParams = {}
-
-  for (const key of ALLOWED_PARAMS) {
-    const values = url.searchParams.getAll(key)
-    if (values.length === 1) params[key] = values[0]
-    if (values.length > 1) params[key] = values
+  const url = new URL(request.url)
+  const query = parseDirectoryRequest(url.search)
+  if (!query.ok) {
+    return Response.json({ error: query.error }, {
+      status: 400, headers: { "Cache-Control": "no-store" },
+    })
+  }
+  const canonicalSearch = query.canonicalQuery ? `?${query.canonicalQuery}` : ""
+  if (url.search !== canonicalSearch) {
+    // A redirect is cheap and makes equivalent URLs share the result cache key.
+    return new Response(null, {
+      status: 307,
+      headers: { Location: `${url.pathname}${canonicalSearch}`, "Cache-Control": "no-store" },
+    })
   }
 
   try {
@@ -36,7 +41,7 @@ async function directoryGet(request: Request) {
       })
     }
     const snapshot = await getDirectorySnapshot()
-    const result = buildDirectoryPage(snapshot, params)
+    const result = buildDirectoryPage(snapshot, query.params)
     return Response.json(result, {
       headers: {
         "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",

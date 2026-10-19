@@ -41,8 +41,8 @@ export interface DirectorySnapshot {
 /**
  * Read one bounded, public projection for the ISR homepage.
  *
- * Query-string filters never call this function: they run over the serialized
- * snapshot in the browser. Reading one record beyond the cap makes growth fail
+ * Query-string filters run over the shared snapshot after request validation.
+ * Reading one record beyond the cap makes growth fail
  * loudly instead of silently publishing an incomplete directory.
  */
 export async function loadDirectorySnapshot(
