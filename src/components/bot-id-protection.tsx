@@ -14,6 +14,7 @@ let initialized = false;
 
 export function BotIdProtection() {
   useEffect(() => {
+    if (process.env.NEXT_PUBLIC_BOTID_ENABLED !== 'true') return;
     if (initialized) return;
     initialized = true;
     initBotId({ protect: protectedRoutes });

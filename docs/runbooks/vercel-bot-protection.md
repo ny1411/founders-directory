@@ -11,6 +11,14 @@ authenticated, human-initiated operations:
 Public directory reads, status polling, static assets, queue callbacks, and
 other server-to-server work are deliberately not protected by BotID.
 
+Enforcement is temporarily **default-off** so this code can be deployed before
+the Vercel project is provisioned. The server enforces BotID only when
+`BOTID_ENFORCEMENT_ENABLED=true`; the browser initializes the challenge only
+when `NEXT_PUBLIC_BOTID_ENABLED=true`. Set both variables in the same Preview
+deployment, validate the flow below, and later promote both to Production.
+Never enable the server flag without the matching public client flag, because
+legitimate browser requests would fail closed.
+
 ## Request order and failure contract
 
 Each protected server path verifies Firebase credentials first. BotID runs only
@@ -59,9 +67,14 @@ Protection classifications in the Firewall traffic view before adding any
 challenge or deny rule. Start in Preview, then enable one Production operation
 at a time after reviewing false positives.
 
+After the project, OIDC, and BotID configuration are ready, remove this
+temporary default-off feature gate in a follow-up change so a missing or
+misspelled environment variable cannot silently disable protection.
+
 ## Preview verification
 
-1. Deploy the SDK integration and `withBotId` rewrite to Preview.
+1. Deploy the SDK integration and `withBotId` rewrite to Preview with both
+   `BOTID_ENFORCEMENT_ENABLED=true` and `NEXT_PUBLIC_BOTID_ENABLED=true`.
 2. Confirm the challenge and proxy paths return `200` through the Preview host.
 3. Sign in with a test Firebase account and exercise each operation from a
    desktop browser, a mobile browser, and keyboard-only navigation.
@@ -107,7 +120,9 @@ enrichment, then company creation. For each step, watch BotID decisions, route
 volume, quota rejections, user reports, and provider usage for at least 24
 hours.
 
-To roll back an action, remove only that route from client protection and its
+During the temporary rollout period, roll back BotID by setting both feature
+flags to `false` in the same deployment. After the temporary gate is removed,
+roll back an action by removing only that route from client protection and its
 server BotID wrapper in the same deployment. Authentication, authorization,
 quotas, payload limits, idempotency, and Firewall rules must stay enabled.
 Removing only client protection while leaving server enforcement active causes

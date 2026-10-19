@@ -26,6 +26,7 @@ type BotIdCheck = typeof checkBotId;
 
 type VerificationOptions = {
   check?: BotIdCheck;
+  enabled?: boolean;
   requireProof?: boolean;
 };
 
@@ -97,11 +98,19 @@ function incomingHeaders(headers: Headers): IncomingHttpHeaders {
   return Object.fromEntries(headers.entries());
 }
 
+export function isBotVerificationEnabled(): boolean {
+  return process.env.BOTID_ENFORCEMENT_ENABLED === 'true';
+}
+
 export async function verifyBotRequest(
   requestHeaders: Headers,
   route: string,
   options: VerificationOptions = {},
 ): Promise<BotVerificationResult> {
+  if (!(options.enabled ?? isBotVerificationEnabled())) {
+    return { allowed: true, outcome: 'allowed' };
+  }
+
   const state = proofState(requestHeaders);
   const requireProof = options.requireProof ?? process.env.NODE_ENV === 'production';
   if (requireProof && state !== 'present') {
@@ -174,6 +183,7 @@ export function createBotProtectedPost(options: ProtectedPostOptions) {
 
     const verification = await verifyBotRequest(request.headers, options.route, {
       check: options.check,
+      enabled: options.enabled,
       requireProof: options.requireProof,
     });
     if (!verification.allowed) return botVerificationResponse(verification);

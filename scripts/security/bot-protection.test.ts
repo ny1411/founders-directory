@@ -22,6 +22,7 @@ test('missing and malformed proofs are rejected without contacting BotID', async
     let checks = 0;
     const headers = new Headers(value === undefined ? {} : { 'x-is-human': value });
     const result = await verifyBotRequest(headers, '/api/protected', {
+      enabled: true,
       requireProof: true,
       check: async () => {
         checks += 1;
@@ -39,6 +40,7 @@ test('missing and malformed proofs are rejected without contacting BotID', async
 test('BotID classifications allow only a human result', async () => {
   const headers = new Headers({ 'x-is-human': proof });
   const human = await verifyBotRequest(headers, '/api/protected', {
+    enabled: true,
     requireProof: true,
     check: async () => ({
       isHuman: true,
@@ -54,6 +56,7 @@ test('BotID classifications allow only a human result', async () => {
     { isHuman: false, isBot: false, isVerifiedBot: true, bypassed: false },
   ]) {
     const result = await verifyBotRequest(headers, '/api/protected', {
+      enabled: true,
       requireProof: true,
       check: async () => classification,
     });
@@ -68,6 +71,7 @@ test('provider failures fail closed with a stable retryable response', async () 
     new Headers({ 'x-is-human': proof }),
     '/api/protected',
     {
+      enabled: true,
       requireProof: true,
       check: async () => {
         throw new Error('private provider details');
@@ -80,6 +84,25 @@ test('provider failures fail closed with a stable retryable response', async () 
   assert.equal(result.message, BOT_VERIFICATION_UNAVAILABLE_MESSAGE);
 });
 
+test('BotID enforcement is default-off until the deployment flag is enabled', async () => {
+  const previous = process.env.BOTID_ENFORCEMENT_ENABLED;
+  delete process.env.BOTID_ENFORCEMENT_ENABLED;
+  let checks = 0;
+  try {
+    const result = await verifyBotRequest(new Headers(), '/api/protected', {
+      check: async () => {
+        checks += 1;
+        throw new Error('BotID must not run while disabled');
+      },
+    });
+    assert.deepEqual(result, { allowed: true, outcome: 'allowed' });
+    assert.equal(checks, 0);
+  } finally {
+    if (previous === undefined) delete process.env.BOTID_ENFORCEMENT_ENABLED;
+    else process.env.BOTID_ENFORCEMENT_ENABLED = previous;
+  }
+});
+
 for (const route of [
   '/api/enrich-contact',
   '/api/extract-resume',
@@ -89,6 +112,7 @@ for (const route of [
     const events: string[] = [];
     const post = createBotProtectedPost({
       route,
+      enabled: true,
       requireProof: true,
       verifyToken: async () => {
         events.push('auth');
@@ -121,6 +145,7 @@ test('authentication remains independent and runs before BotID', async () => {
   let downstream = 0;
   const post = createBotProtectedPost({
     route: '/api/protected',
+    enabled: true,
     requireProof: true,
     verifyToken: async () => {
       throw new Error('expired token');
