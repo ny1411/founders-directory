@@ -1,5 +1,4 @@
-import { adminDb } from "@/lib/firebase-admin"
-import { Company, Founder } from "@/lib/types"
+import { getCompany, getCompanyFounders, normalizeCompanySlug } from "@/lib/company-query"
 import { notFound } from "next/navigation"
 import Image from "next/image"
 import Link from "next/link"
@@ -15,9 +14,9 @@ export async function generateMetadata(
   props: { params: Promise<{ slug: string }> }
 ): Promise<Metadata> {
   const params = await props.params;
-  const companySnapshot = await adminDb.collection('companies').where('slug', '==', params.slug).limit(1).get();
+  const company = await getCompany(params.slug);
 
-  if (companySnapshot.empty) {
+  if (!company) {
     return {
       title: "Company Not Found",
       alternates: {
@@ -30,25 +29,25 @@ export async function generateMetadata(
     }
   }
 
-  const company = companySnapshot.docs[0].data() as Company;
-  const logoUrl = normalizeImageUrl(company.logoUrl) ?? '/icon.png';
+  const slug = normalizeCompanySlug(params.slug)!;
+  const ogImageUrl = '/opengraph-image';
 
   return {
     title: company.name,
     description: company.oneLiner || company.description || `View details about ${company.name}`,
     alternates: {
-      canonical: `/company/${params.slug}`,
+      canonical: `/company/${slug}`,
     },
     openGraph: {
       title: `${company.name} | Founders Directory`,
       description: company.oneLiner || company.description || `View details about ${company.name}`,
-      url: `/company/${params.slug}`,
+      url: `/company/${slug}`,
       siteName: "Founders Directory",
       images: [
         {
-          url: logoUrl,
-          width: 800,
-          height: 600,
+          url: ogImageUrl,
+          width: 1200,
+          height: 630,
         }
       ],
       type: "website",
@@ -57,24 +56,28 @@ export async function generateMetadata(
       card: "summary_large_image",
       title: company.name,
       description: company.oneLiner || company.description || `View details about ${company.name}`,
-      images: [logoUrl],
+      images: [ogImageUrl],
     },
   }
 }
 
+export const revalidate = 3600
+
+// Next 15 needs generateStaticParams for runtime slugs to enter the ISR cache.
+// No company reads are needed during the build; each slug renders on first visit.
+export async function generateStaticParams(): Promise<Array<{ slug: string }>> {
+  return []
+}
+
 export default async function CompanyPage(props: { params: Promise<{ slug: string }> }) {
   const params = await props.params;
-  
-  const companySnapshot = await adminDb.collection('companies').where('slug', '==', params.slug).limit(1).get();
+  const companyData = await getCompany(params.slug);
 
-  if (companySnapshot.empty) {
+  if (!companyData) {
     notFound()
   }
 
-  const companyData = { id: companySnapshot.docs[0].id, ...companySnapshot.docs[0].data() } as Company;
-
-  const foundersSnapshot = await adminDb.collection('founders').where('companyId', '==', companyData.id).get();
-  const founders = foundersSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Founder));
+  const founders = await getCompanyFounders(companyData.id);
 
   const company = { ...companyData, founders };
   const companyLogoUrl = normalizeImageUrl(company.logoUrl);

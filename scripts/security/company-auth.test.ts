@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
+import { companyCacheTag, normalizeCompanySlug } from '../../src/lib/company-query';
 
 const require = createRequire(import.meta.url);
 const { redirect } = require('next/navigation') as { redirect: (url: string) => never };
@@ -67,6 +68,7 @@ function fixture(options: FixtureOptions = {}) {
           return options.botResult ?? { allowed: true, outcome: 'allowed' };
         },
       };
+      if (name === '@/lib/company-query') return { companyCacheTag, normalizeCompanySlug };
       if (name === 'next/cache') return {
         revalidatePath: (path: string) => operations.push(`revalidate:${path}`),
         revalidateTag: (tag: string) => operations.push(`revalidate-tag:${tag}`),
@@ -149,6 +151,8 @@ test('an ordinary authenticated user saves the company and founders once and pre
   assert.equal(action.writes[2].data.companyId, 'companies-id');
   assert.equal(action.operations.filter(operation => operation === 'commit').length, 1);
   assert.ok(action.operations.includes('revalidate-tag:company-directory'));
+  assert.ok(action.operations.includes('revalidate-tag:company:authenticated-company'));
+  assert.ok(action.operations.includes('revalidate:/company/authenticated-company'));
   assert.equal(action.operations.at(-1), 'revalidate:/');
 });
 

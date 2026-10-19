@@ -3,6 +3,7 @@
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
 import { DIRECTORY_CACHE_TAG } from "@/lib/directory-cache"
 import { verifyBotRequest } from "@/lib/bot-verification"
+import { companyCacheTag, normalizeCompanySlug } from "@/lib/company-query"
 import { revalidatePath, revalidateTag } from "next/cache"
 import { headers } from "next/headers"
 import { redirect } from "next/navigation"
@@ -23,7 +24,8 @@ export async function createCompany(formData: FormData, idToken: string): Promis
   if (!botVerification.allowed) return { error: botVerification.message }
 
   const name = formData.get('name') as string
-  const slug = formData.get('slug') as string
+  const slug = normalizeCompanySlug(String(formData.get('slug') ?? ''))
+  if (!slug) return { error: 'Enter a valid company slug using letters, numbers, and hyphens.' }
   const description = formData.get('description') as string
   const website = formData.get('website') as string
   const logoUrl = formData.get('logoUrl') as string
@@ -91,6 +93,8 @@ export async function createCompany(formData: FormData, idToken: string): Promis
   }
 
   revalidateTag(DIRECTORY_CACHE_TAG)
+  revalidateTag(companyCacheTag(slug))
+  revalidatePath(`/company/${slug}`)
   revalidatePath('/')
   redirect(`/company/${slug}`)
 }
