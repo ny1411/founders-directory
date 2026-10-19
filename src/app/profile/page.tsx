@@ -76,6 +76,7 @@ export default function ProfilePage() {
       <BotIdProtection />
       <OnboardingForm
         key={user.uid}
+        uid={user.uid}
         request={request}
         upload={upload}
         onExit={() => router.push("/")}

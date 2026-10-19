@@ -168,6 +168,26 @@ export function createOnboardingHandler(
         );
       }
       const state = await store.load(identity.uid);
+      // A response can be lost after a successful write. Treat a replay of the
+      // same patch as complete, while retaining revision checks for new data.
+      if (state.goal && input.goalId === state.goal.id &&
+          input.questionnaireVersion === QUESTIONNAIRE_VERSION &&
+          (input.profileVersion !== state.profile.version ||
+           input.goalRevision !== (state.goal.revision ?? 0))) {
+        if (input.action === "save_answers" && !profileOnly) {
+          const patch = validateAnswers(state.goal.type, input.answers);
+          const sameProfile = Object.entries(patch.profile).every(
+            ([id, answer]) => state.profile.answers[id] === answer,
+          );
+          const sameGoal = Object.entries(patch.goal).every(
+            ([id, answer]) => state.goal!.answers[id] === answer,
+          );
+          if (sameProfile && sameGoal) return response(state);
+        }
+        if (input.action === "save_summary" &&
+            typeof input.summary === "string" && input.summary.length <= 1200 &&
+            state.goal.summary === input.summary.trim()) return response(state);
+      }
       validateWriteContext(input, state);
       if (profileOnly || input.action === "save_answers") {
         const answers = validateAnswers(state.goal!.type, input.answers);

@@ -10,11 +10,39 @@ export type OnboardingRequest = (
   body?: Record<string, unknown>,
 ) => Promise<OnboardingState>;
 
+const DEBOUNCE_MS = 1800;
+const RECOVERY_VERSION = 1;
+const RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_RETRIES = 3;
+
+interface RecoveryDraft {
+  version: number;
+  expiresAt: number;
+  goalId: string;
+  profileVersion: number;
+  goalRevision: number;
+  questionnaireVersion: number;
+  answers: Record<string, string>;
+  summary: string;
+  summaryChanged: boolean;
+}
+
+function isTransient(reason: unknown) {
+  if (reason instanceof ProfileRequestError)
+    return reason.status === 408 || reason.status === 429 ||
+      (reason.status !== undefined && reason.status >= 500);
+  return reason instanceof TypeError;
+}
+
+function recoveryKey(uid: string) {
+  return `onboarding-draft:v${RECOVERY_VERSION}:${uid}`;
+}
+
 function combined(state: OnboardingState) {
   return { ...state.profile.answers, ...state.goal?.answers };
 }
 
-export function useOnboarding(request: OnboardingRequest) {
+export function useOnboarding(request: OnboardingRequest, uid: string) {
   const [state, setState] = useState<OnboardingState | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [summary, setSummary] = useState("");
@@ -22,6 +50,7 @@ export function useOnboarding(request: OnboardingRequest) {
   const [status, setStatus] = useState("Loading…");
   const [editRevision, setEditRevision] = useState(0);
   const [loadState, setLoadState] = useState<ProfileLoadState>("loading");
+  const [recoveryAvailable, setRecoveryAvailable] = useState(false);
   const current = useRef<OnboardingState | null>(null);
   const draft = useRef<Record<string, string>>({});
   const saved = useRef<Record<string, string>>({});
@@ -29,7 +58,7 @@ export function useOnboarding(request: OnboardingRequest) {
   const summarySaved = useRef("");
   const inFlight = useRef<Promise<void> | null>(null);
 
-  const apply = useCallback((next: OnboardingState) => {
+  const apply = useCallback((next: OnboardingState, clearRecovery = true) => {
     current.current = next;
     draft.current = combined(next);
     saved.current = { ...draft.current };
@@ -40,12 +69,50 @@ export function useOnboarding(request: OnboardingRequest) {
     setStatus("All changes saved");
     setError("");
     setLoadState("ready");
-  }, []);
+    setRecoveryAvailable(false);
+    if (clearRecovery)
+      try { localStorage.removeItem(recoveryKey(uid)); } catch { /* Storage unavailable. */ }
+  }, [uid]);
+
+  const restore = useCallback((next: OnboardingState) => {
+    let value: RecoveryDraft | null = null;
+    try {
+      const raw = localStorage.getItem(recoveryKey(uid));
+      if (raw) value = JSON.parse(raw) as RecoveryDraft;
+    } catch { /* Ignore malformed or unavailable storage. */ }
+    apply(next, false);
+    if (!value) return;
+    if (value.version !== RECOVERY_VERSION ||
+        value.expiresAt <= Date.now() ||
+        value.questionnaireVersion !== QUESTIONNAIRE_VERSION ||
+        !value.answers || typeof value.answers !== "object" ||
+        Object.values(value.answers).some((answer) => typeof answer !== "string") ||
+        typeof value.summary !== "string" ||
+        typeof value.summaryChanged !== "boolean") {
+      try { localStorage.removeItem(recoveryKey(uid)); } catch { /* Storage unavailable. */ }
+      return;
+    }
+    if (value.goalId !== next.goal?.id) return;
+    if (value.profileVersion !== next.profile.version ||
+        value.goalRevision !== (next.goal?.revision ?? 0)) {
+      setRecoveryAvailable(true);
+      setError("A newer profile was saved while you had local edits. Restore those edits to review and save them.");
+      return;
+    }
+    draft.current = { ...draft.current, ...value.answers };
+    if (value.summaryChanged) summaryDraft.current = value.summary;
+    setAnswers(draft.current);
+    setSummary(summaryDraft.current);
+    if (Object.keys(value.answers).length || value.summaryChanged) {
+      setStatus("Unsaved changes recovered");
+      try { localStorage.setItem(recoveryKey(uid), JSON.stringify(value)); } catch { /* Storage unavailable. */ }
+    }
+  }, [apply, uid]);
 
   const load = useCallback(async () => {
     setLoadState("loading");
     try {
-      apply(await request("GET"));
+      restore(await request("GET"));
     } catch (reason) {
       setLoadState(
         reason instanceof ProfileRequestError ? reason.state : "backend-error",
@@ -56,13 +123,13 @@ export function useOnboarding(request: OnboardingRequest) {
           : "Unable to load your profile.",
       );
     }
-  }, [apply, request]);
+  }, [restore, request]);
 
   useEffect(() => {
     let active = true;
     void request("GET")
       .then((next) => {
-        if (active) apply(next);
+        if (active) restore(next);
       })
       .catch((reason) => {
         if (active) {
@@ -81,7 +148,7 @@ export function useOnboarding(request: OnboardingRequest) {
     return () => {
       active = false;
     };
-  }, [apply, request]);
+  }, [restore, request]);
 
   const context = useCallback(() => {
     const value = current.current;
@@ -101,27 +168,90 @@ export function useOnboarding(request: OnboardingRequest) {
     [],
   );
 
+  const persistRecovery = useCallback(() => {
+    try {
+      const goal = current.current?.goal;
+      if (!goal || !pending()) {
+        localStorage.removeItem(recoveryKey(uid));
+        return;
+      }
+      const value: RecoveryDraft = {
+        version: RECOVERY_VERSION,
+        expiresAt: Date.now() + RECOVERY_TTL_MS,
+        goalId: goal.id,
+        profileVersion: current.current!.profile.version,
+        goalRevision: goal.revision ?? 0,
+        questionnaireVersion: QUESTIONNAIRE_VERSION,
+        answers: Object.fromEntries(Object.entries(draft.current).filter(
+          ([id, answer]) => saved.current[id] !== answer,
+        )),
+        summary: summaryDraft.current,
+        summaryChanged: summaryDraft.current !== summarySaved.current,
+      };
+      localStorage.setItem(recoveryKey(uid), JSON.stringify(value));
+    } catch { /* Storage unavailable. */ }
+  }, [pending, uid]);
+
+  const recoverDraft = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(recoveryKey(uid));
+      if (!raw) return;
+      const value = JSON.parse(raw) as RecoveryDraft;
+      if (value.version !== RECOVERY_VERSION || value.expiresAt <= Date.now() ||
+          value.goalId !== current.current?.goal?.id ||
+          value.questionnaireVersion !== QUESTIONNAIRE_VERSION ||
+          !value.answers || typeof value.answers !== "object" ||
+          Object.values(value.answers).some((answer) => typeof answer !== "string") ||
+          typeof value.summary !== "string" ||
+          typeof value.summaryChanged !== "boolean") return;
+      draft.current = { ...draft.current, ...value.answers };
+      if (value.summaryChanged) summaryDraft.current = value.summary;
+      setAnswers(draft.current);
+      setSummary(summaryDraft.current);
+      setRecoveryAvailable(false);
+      setError("");
+      setStatus("Unsaved changes recovered");
+      persistRecovery();
+      setEditRevision((revision) => revision + 1);
+    } catch { /* Storage unavailable. */ }
+  }, [persistRecovery, uid]);
+
+  const send = useCallback(async (body: Record<string, unknown>) => {
+    for (let attempt = 0;; attempt++) {
+      try {
+        if (typeof performance !== "undefined")
+          performance.mark("onboarding:autosave-request");
+        return await request("POST", body);
+      } catch (reason) {
+        if (!isTransient(reason) || attempt >= MAX_RETRIES) throw reason;
+        const delay = Math.min(4000, 400 * 2 ** attempt) + Math.random() * 250;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
+      }
+    }
+  }, [request]);
+
   const flush = useCallback((): Promise<void> => {
     if (inFlight.current) return inFlight.current;
+    if (!pending()) return Promise.resolve();
     const operation = async () => {
       setStatus("Saving…");
+      setError("");
       try {
         // Keep draining edits made while a previous network request was running.
         while (pending()) {
-          const snapshot = { ...draft.current };
           const changed = Object.fromEntries(
-            Object.entries(snapshot).filter(
+            Object.entries(draft.current).filter(
               ([id, value]) => saved.current[id] !== value,
             ),
           );
           if (Object.keys(changed).length) {
-            const next = await request("POST", {
+            const next = await send({
               action: "save_answers",
               ...context(),
               answers: changed,
             });
             current.current = next;
-            saved.current = snapshot;
+            saved.current = { ...saved.current, ...changed };
             setState(next); // Never replace the user's newer draft with an older response.
             if (summaryDraft.current === summarySaved.current) {
               summaryDraft.current = summarySaved.current =
@@ -131,7 +261,7 @@ export function useOnboarding(request: OnboardingRequest) {
             continue;
           }
           const summarySnapshot = summaryDraft.current;
-          const next = await request("POST", {
+          const next = await send({
             action: "save_summary",
             ...context(),
             summary: summarySnapshot,
@@ -139,7 +269,9 @@ export function useOnboarding(request: OnboardingRequest) {
           current.current = next;
           summarySaved.current = summarySnapshot;
           setState(next);
+          persistRecovery();
         }
+        persistRecovery();
         setStatus("All changes saved");
         setError("");
       } catch (reason) {
@@ -154,6 +286,7 @@ export function useOnboarding(request: OnboardingRequest) {
             ? reason.message
             : "Unable to save your changes.",
         );
+        persistRecovery();
         throw reason;
       }
     };
@@ -162,38 +295,49 @@ export function useOnboarding(request: OnboardingRequest) {
     });
     inFlight.current = promise;
     return promise;
-  }, [context, pending, request]);
+  }, [context, pending, persistRecovery, send]);
 
   useEffect(() => {
     if (!editRevision) return;
     const timeout = window.setTimeout(() => {
       void flush().catch(() => undefined);
-    }, 600);
+    }, DEBOUNCE_MS);
     return () => window.clearTimeout(timeout);
   }, [editRevision, flush]);
 
   useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") void flush().catch(() => undefined);
+    };
     const warn = (event: BeforeUnloadEvent) => {
       if (pending() || inFlight.current) {
+        persistRecovery();
+        void flush().catch(() => undefined);
         event.preventDefault();
         event.returnValue = "";
       }
     };
+    document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [pending]);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("beforeunload", warn);
+    };
+  }, [flush, pending, persistRecovery]);
 
   const changeAnswer = (id: string, value: string) => {
     draft.current = { ...draft.current, [id]: value };
     setAnswers(draft.current);
-    setStatus("Unsaved changes");
+    setStatus(pending() ? "Unsaved changes" : "All changes saved");
+    persistRecovery();
     setEditRevision((revision) => revision + 1);
   };
 
   const changeSummary = (value: string) => {
     summaryDraft.current = value;
     setSummary(value);
-    setStatus("Unsaved changes");
+    setStatus(pending() ? "Unsaved changes" : "All changes saved");
+    persistRecovery();
     setEditRevision((revision) => revision + 1);
   };
 
@@ -211,6 +355,8 @@ export function useOnboarding(request: OnboardingRequest) {
     summary,
     status,
     error,
+    recoveryAvailable,
+    recoverDraft,
     load,
     apply,
     flush,

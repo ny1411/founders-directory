@@ -55,14 +55,15 @@ const stages: Array<{ value: GoalStage; label: string }> = [
 ];
 
 interface Props {
+  uid: string;
   request: OnboardingRequest;
   upload: (file: File) => Promise<OnboardingState>;
   onExit: () => void;
   onLogout: () => Promise<void>;
 }
 
-export function OnboardingForm({ request, upload, onExit, onLogout }: Props) {
-  const form = useOnboarding(request);
+export function OnboardingForm({ uid, request, upload, onExit, onLogout }: Props) {
+  const form = useOnboarding(request, uid);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [changingGoal, setChangingGoal] = useState(false);
@@ -209,6 +210,11 @@ export function OnboardingForm({ request, upload, onExit, onLogout }: Props) {
           className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 p-4 text-sm"
         >
           <p className="flex-1">{error}</p>
+          {form.recoveryAvailable ? (
+            <Button variant="outline" disabled={busy} onClick={form.recoverDraft}>
+              Restore local edits
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             disabled={busy}
@@ -399,6 +405,7 @@ export function OnboardingForm({ request, upload, onExit, onLogout }: Props) {
                     onChange={(event) =>
                       form.changeAnswer(question.id, event.target.value)
                     }
+                    onBlur={() => void form.flush().catch(() => undefined)}
                   />
                   <span className="text-xs text-muted-foreground">
                     {form.answers[question.id]?.length ?? 0}/
@@ -472,6 +479,7 @@ export function OnboardingForm({ request, upload, onExit, onLogout }: Props) {
               value={form.summary}
               maxLength={1200}
               onChange={(event) => form.changeSummary(event.target.value)}
+              onBlur={() => void form.flush().catch(() => undefined)}
             />
           </CardContent>
           <CardFooter className="justify-between gap-4">

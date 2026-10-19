@@ -297,7 +297,7 @@ export class OnboardingStore {
   private async mutate(
     uid: string,
     expected: OnboardingState,
-    update: (state: OnboardingState, transaction: Transaction) => void,
+    update: (state: OnboardingState, transaction: Transaction) => void | false,
   ) {
     if (!expected.goal)
       throw new OnboardingValidationError("Choose an intent first.");
@@ -337,7 +337,7 @@ export class OnboardingStore {
         profile,
         goal,
       };
-      update(current, transaction);
+      if (update(current, transaction) === false) return;
       goal.revision = (goal.revision ?? 0) + 1;
       goal.updatedAt = this.clock();
       transaction.set(refs.profile, profile);
@@ -375,7 +375,7 @@ export class OnboardingStore {
         Object.entries(goalAnswers).some(
           ([id, value]) => current.goal!.answers[id] !== value,
         );
-      if (!changed) return;
+      if (!changed) return false;
       current.profile.answers = {
         ...current.profile.answers,
         ...profileAnswers,
@@ -449,6 +449,7 @@ export class OnboardingStore {
         throw new OnboardingValidationError(
           "Enter the review stage before editing your summary.",
         );
+      if (current.goal!.summary === summary) return false;
       current.goal!.summary = summary;
       current.goal!.summaryProfileVersion = current.profile.version;
       current.goal!.summaryConfirmed = false;
