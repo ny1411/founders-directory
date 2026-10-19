@@ -185,6 +185,25 @@ test("stale versions and simultaneous writes cannot overwrite a newer profile", 
   assert.equal((await f.state()).profile.answers.about, "First edit");
 });
 
+test("unchanged patches do not write and a lost response can be replayed", async () => {
+  const f = fixture();
+  await must(f.post({ action: "select_intent", intent: "sell_services", stage: "exploring" }));
+  const initial = await f.state();
+  const initialWrites = f.memory.writes;
+  await must(f.post({ action: "save_answers", answers: {} }, initial));
+  assert.equal(f.memory.writes, initialWrites);
+  assert.equal((await f.state()).goal?.revision, initial.goal?.revision);
+
+  const patch = { action: "save_answers", answers: { about: "A short introduction" } };
+  await must(f.post(patch, initial));
+  const saved = await f.state();
+  const writes = f.memory.writes;
+  await must(f.post(patch, initial));
+  assert.equal(f.memory.writes, writes);
+  assert.equal((await f.state()).goal?.revision, saved.goal?.revision);
+  await must(f.post({ ...patch, answers: { about: "An older edit" } }, initial), 409);
+});
+
 test("stage transitions, unconfirmed summaries, and outdated questionnaires fail closed", async () => {
   const f = fixture();
   await must(

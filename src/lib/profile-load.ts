@@ -11,6 +11,8 @@ export class ProfileRequestError extends Error {
   constructor(
     message: string,
     readonly state: "auth-error" | "backend-error",
+    readonly status?: number,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -34,7 +36,13 @@ export async function readOnboardingResponse(
       typeof data.error === "string"
         ? data.error
         : "Unable to load your saved profile.";
-    throw new ProfileRequestError(error, "backend-error");
+    throw new ProfileRequestError(
+      error,
+      "backend-error",
+      response.status,
+      data && typeof data === "object" && "code" in data &&
+        typeof data.code === "string" ? data.code : undefined,
+    );
   }
   const object = (value: unknown): value is Record<string, unknown> =>
     Boolean(value && typeof value === "object" && !Array.isArray(value));

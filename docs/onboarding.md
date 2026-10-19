@@ -37,6 +37,8 @@ Every action except `select_intent` must include `goalId`, `profileVersion`, `go
 
 The onboarding form maintains a local draft separately from the last server snapshot. One save queue drains edits made during earlier requests. Forward/back navigation, goal changes, logout, and confirmation wait for that queue. Summary edits also autosave. Failed requests keep the draft available for retry; a browser unload warning protects changes that have not finished saving.
 
+Autosave waits 1.8 seconds after the last edit, sends only changed answers, and skips unchanged drafts. Blur and page visibility changes flush the queue. Transient network, 408, 429, and 5xx failures receive at most three retries with jitter; validation, authentication, and conflict failures stop immediately. An unsaved draft is kept in local storage per account for 24 hours with a schema and questionnaire version, and removed after confirmed persistence. On load, it is restored automatically when goal and server revisions match; when a newer server revision exists, the user can explicitly restore the local edits. Each autosave attempt records a `onboarding:autosave-request` browser performance mark; count marks per completed session before and after rollout to measure request reduction.
+
 ## Verification
 
 ```sh

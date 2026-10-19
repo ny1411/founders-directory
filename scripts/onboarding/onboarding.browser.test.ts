@@ -9,6 +9,7 @@ import { chromium, type Page } from "playwright";
 import { fixture, MemoryFirestore, resumeFixture } from "./fixture";
 import {
   getIntentQuestionnaire,
+  QUESTIONNAIRE_VERSION,
   sharedQuestionnaire,
 } from "../../src/lib/onboarding/questionnaires";
 import { INTENTS, type UserIntent } from "../../src/lib/onboarding/types";
@@ -48,7 +49,7 @@ test(
       const upload = async (file) => { const form=new FormData(); form.append("file",file);
         const response=await fetch("/api/extract-resume",{method:"POST",headers:{authorization:"Bearer " + uid},body:form});
         const data=await response.json(); if(!response.ok) throw new Error(data.error); return request("GET"); };
-      createRoot(document.getElementById("root")).render(<OnboardingForm request={request} upload={upload} onExit={()=>{}} onLogout={async()=>{}} />);`,
+      createRoot(document.getElementById("root")).render(<OnboardingForm uid={uid} request={request} upload={upload} onExit={()=>{}} onLogout={async()=>{}} />);`,
         resolveDir: process.cwd(),
         loader: "tsx",
       },
@@ -75,6 +76,7 @@ test(
       }
     >();
     const failures = new Set<string>();
+    const saveRequests = new Map<string, number>();
     const cssDirectory = path.join(process.cwd(), ".next/static/css");
     const css = existsSync(cssDirectory)
       ? readdirSync(cssDirectory)
@@ -139,6 +141,8 @@ test(
             incoming.method === "POST"
               ? JSON.parse(Buffer.concat(chunks).toString())
               : {};
+          if (input.action === "save_answers" || input.action === "save_summary")
+            saveRequests.set(uid, (saveRequests.get(uid) ?? 0) + 1);
           if (input.action === "save_answers" && failures.delete(uid))
             result = Response.json(
               { error: "Temporary save failure. Please retry." },
@@ -350,6 +354,60 @@ test(
         );
       }
 
+      await t.test("typing is debounced, unchanged blur is a no-op, and recovery clears", async () => {
+        const uid = "browser-debounce";
+        const page = await open(uid);
+        await choose(page, "sell_services");
+        await page.locator("#about").pressSequentially("Continuous typing", { delay: 65 });
+        const draft = await page.evaluate((owner) =>
+          JSON.parse(localStorage.getItem(`onboarding-draft:v1:${owner}`) || "null"), uid);
+        assert.equal(draft.version, 1);
+        assert.ok(draft.expiresAt > Date.now());
+        assert.equal(draft.answers.about, "Continuous typing");
+        await page.locator("#about").blur();
+        await saved(page);
+        assert.equal(saveRequests.get(uid), 1);
+        assert.equal(await page.evaluate((owner) =>
+          localStorage.getItem(`onboarding-draft:v1:${owner}`), uid), null);
+        await page.locator("#about").fill("Continuous typing");
+        await page.locator("#about").blur();
+        await page.waitForTimeout(2000);
+        assert.equal(saveRequests.get(uid), 1);
+        await page.close();
+      });
+
+      await t.test("a newer server revision keeps local edits available for explicit recovery", async () => {
+        const uid = "browser-recovery-conflict";
+        const page = await open(uid);
+        await choose(page, "sell_services");
+        const f = getFixture(uid);
+        const before = await f.state();
+        await page.evaluate(({ owner, draft }) => localStorage.setItem(
+          `onboarding-draft:v1:${owner}`, JSON.stringify(draft)), {
+          owner: uid,
+          draft: {
+            version: 1,
+            expiresAt: Date.now() + 60_000,
+            goalId: before.goal!.id,
+            profileVersion: before.profile.version,
+            goalRevision: before.goal!.revision,
+            questionnaireVersion: QUESTIONNAIRE_VERSION,
+            answers: { about: "My unsaved local edit" },
+            summary: before.goal!.summary ?? "",
+            summaryChanged: false,
+          },
+        });
+        assert.equal((await f.post({ action: "save_answers", answers: { about: "Newer server edit" } })).status, 200);
+        await page.reload();
+        await page.getByRole("button", { name: "Restore local edits" }).waitFor();
+        assert.equal(await page.locator("#about").inputValue(), "Newer server edit");
+        await page.getByRole("button", { name: "Restore local edits" }).click();
+        assert.equal(await page.locator("#about").inputValue(), "My unsaved local edit");
+        await saved(page);
+        assert.equal((await f.state()).profile.answers.about, "My unsaved local edit");
+        await page.close();
+      });
+
       await t.test(
         "typing during an in-flight save and navigating back never loses newer answers",
         async () => {
@@ -389,7 +447,7 @@ test(
       );
 
       await t.test(
-        "failed saves retain the draft and retry persists it",
+        "transient saves retry and persist the latest draft",
         async () => {
           const uid = "browser-retry";
           const page = await open(uid);
@@ -399,15 +457,11 @@ test(
           await page
             .locator("#about")
             .fill("Keep this draft after a failed save");
-          await page.getByRole("alert").waitFor();
+          await saved(page);
           assert.equal(
             await page.locator("#about").inputValue(),
             "Keep this draft after a failed save",
           );
-          await page
-            .getByRole("button", { name: "Retry save", exact: true })
-            .click();
-          await saved(page);
           await page.reload();
           await page.locator("#about").waitFor();
           assert.equal(
