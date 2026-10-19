@@ -9,6 +9,7 @@ import {
   ProfileRequestError,
   readOnboardingResponse,
 } from "@/lib/profile-load";
+import { parseResumeData } from "@/lib/onboarding/resume";
 import { BotIdProtection } from "@/components/bot-id-protection";
 
 export default function ProfilePage() {
@@ -59,9 +60,9 @@ export default function ProfilePage() {
       const payload = await response.json();
       if (!response.ok)
         throw new Error(payload.error || "Unable to import this resume.");
-      return request("GET");
+      return parseResumeData(payload.resume);
     },
-    [user, request],
+    [user],
   );
 
   if (loading || !user)

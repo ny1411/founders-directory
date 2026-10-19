@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import test from 'node:test';
 import type { Firestore } from 'firebase-admin/firestore';
 import { createResumeExtractionHandler, MAX_RESUME_REQUEST_BYTES } from '../../src/lib/resume-extraction-handler';
@@ -58,29 +57,22 @@ test('valid PDF verifies identity, reserves allowance, then returns schema-valid
   assert.deepEqual(events, ['verify:valid', 'reserve:verified-user', 'model:%PDF-1.7\nfixture']);
 });
 
-test('successful extraction can persist typed source data for the verified owner', async () => {
-  const writes: unknown[][] = [];
-  const handler = createResumeExtractionHandler({
-    verifyToken: async () => ({ uid: 'verified-user' }),
-    reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
-    extract: async () => JSON.stringify({ name: 'Candidate', skills: ['TypeScript'] }),
-    persist: async (...args) => { writes.push(args); },
-  });
-  assert.equal((await handler(upload())).status, 200);
-  assert.deepEqual(writes, [['verified-user', { name: 'Candidate', skills: ['TypeScript'] }, createHash('sha256').update('%PDF-1.7\nfixture').digest('hex')]]);
+test('successful extraction returns a private draft without persistence', async () => {
+  const { handler } = setup();
+  const response = await handler(upload());
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.deepEqual(await response.json(), { resume: { name: 'Candidate' } });
 });
 
-test('malformed or empty model extractions are never persisted as usable resumes', async () => {
+test('malformed or empty model extractions are never returned as usable resumes', async () => {
   for (const value of [{}, { name: 'Ada', skills: 42 }, { name: 'Ada', projects: 'wrong shape' }]) {
-    let writes = 0;
     const handler = createResumeExtractionHandler({
       verifyToken: async () => ({ uid: 'verified-user' }),
       reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
       extract: async () => JSON.stringify(value),
-      persist: async () => { writes++; },
     });
     assert.equal((await handler(upload())).status, 502);
-    assert.equal(writes, 0);
   }
 });
 

@@ -27,8 +27,8 @@ import {
 } from "@/lib/onboarding/questionnaires";
 import type {
   GoalStage,
-  OnboardingState,
   OnboardingStep,
+  ResumeData,
   UserIntent,
 } from "@/lib/onboarding/types";
 import {
@@ -36,6 +36,7 @@ import {
   RESUME_SIZE_ERROR,
   RESUME_TYPE_ERROR,
 } from "@/lib/resume-upload";
+import { ResumeEditor } from "./resume-editor";
 import { useOnboarding, type OnboardingRequest } from "./use-onboarding";
 
 const intents: Array<{ value: UserIntent; label: string }> = [
@@ -57,13 +58,14 @@ const stages: Array<{ value: GoalStage; label: string }> = [
 interface Props {
   uid: string;
   request: OnboardingRequest;
-  upload: (file: File) => Promise<OnboardingState>;
+  upload: (file: File) => Promise<ResumeData>;
   onExit: () => void;
   onLogout: () => Promise<void>;
 }
 
 export function OnboardingForm({ uid, request, upload, onExit, onLogout }: Props) {
   const form = useOnboarding(request, uid);
+  const [resumeEditor, setResumeEditor] = useState<{ data: ResumeData | null; unavailable: boolean; context: Record<string, unknown>; key: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [changingGoal, setChangingGoal] = useState(false);
@@ -103,11 +105,32 @@ export function OnboardingForm({ uid, request, upload, onExit, onLogout }: Props
       )
         throw new Error(RESUME_TYPE_ERROR);
       await form.flush();
-      form.apply(await upload(file));
-      setMessage(
-        "Resume imported. Review the prefilled answers and add your own perspective.",
-      );
+      const data = await upload(file);
+      setResumeEditor({ data, unavailable: false, context: form.context(), key: Date.now() });
     });
+
+  const editResume = async () => {
+    await form.flush();
+    // Explicitly reloading after a conflict must use the latest server revision.
+    const latest = await request("GET");
+    if (latest.goal?.type !== "job") {
+      form.apply(latest);
+      setResumeEditor(null);
+      setMessage("Your active goal changed. Review your current profile before continuing.");
+      return;
+    }
+    const next = await request("POST", { action: "load_resume", goalId: latest.goal.id,
+      goalRevision: latest.goal.revision ?? 0, profileVersion: latest.profile.version,
+      questionnaireVersion: latest.goal.questionnaireVersion });
+    if (!next.resumeEditor) throw new Error("Unable to load resume details. Please retry.");
+    form.apply(next);
+    setResumeEditor({ ...next.resumeEditor, context: {
+      goalId: next.goal?.id,
+      goalRevision: next.goal?.revision ?? 0,
+      profileVersion: next.profile.version,
+      questionnaireVersion: next.goal?.questionnaireVersion,
+    }, key: Date.now() });
+  };
 
   if (!form.state || form.loadState === "auth-error")
     return (
@@ -158,7 +181,7 @@ export function OnboardingForm({ uid, request, upload, onExit, onLogout }: Props
         <Button
           variant="outline"
           size="sm"
-          disabled={busy}
+          disabled={busy || Boolean(resumeEditor)}
           onClick={() =>
             void run(async () => {
               await form.flush();
@@ -184,9 +207,9 @@ export function OnboardingForm({ uid, request, upload, onExit, onLogout }: Props
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-sm text-muted-foreground">
-          {busy ? "Working…" : form.status}
+          {busy ? "Working…" : resumeEditor ? "Resume draft has not been saved" : form.status}
         </p>
-        {state.goal && step !== "intent" ? (
+        {state.goal && step !== "intent" && !resumeEditor ? (
           <Button
             variant="outline"
             size="sm"
@@ -232,6 +255,20 @@ export function OnboardingForm({ uid, request, upload, onExit, onLogout }: Props
         </div>
       ) : null}
 
+      {resumeEditor ? (
+        <ResumeEditor key={resumeEditor.key} initial={resumeEditor.data} unavailable={resumeEditor.unavailable}
+          onCancel={() => { setResumeEditor(null); setMessage(""); }}
+          onReload={editResume}
+          onSave={async (data) => {
+            const next = await request("POST", { action: "save_resume", ...resumeEditor.context, resume: data });
+            form.apply(next);
+            setResumeEditor(null);
+            setMessage("");
+          }} />
+      ) : <>
+        {state.goal?.type === "job" && state.profile.hasResume && step !== "intent" ? (
+          <Button variant="outline" disabled={busy} className="self-start" onClick={() => void run(editResume)}>Review or edit resume details</Button>
+        ) : null}
       {step === "intent" ? (
         <Card>
           <CardHeader>
@@ -551,6 +588,8 @@ export function OnboardingForm({ uid, request, upload, onExit, onLogout }: Props
           </CardFooter>
         </Card>
       ) : null}
+      </>}
+
     </section>
   );
 }

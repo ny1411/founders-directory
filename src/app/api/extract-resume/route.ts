@@ -144,7 +144,6 @@ Structure the JSON as follows:
     if (!response.text) throw new Error('Empty extraction response');
     return response.text;
   },
-  persist: (uid, parsed, hash) => onboardingStore.saveResume(uid, parsed, hash),
 });
 
 const protectedPost = createBotProtectedPost({

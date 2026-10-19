@@ -1,5 +1,4 @@
 import { MAX_RESUME_BYTES, RESUME_SIZE_ERROR, RESUME_TYPE_ERROR } from './resume-upload';
-import { createHash } from 'node:crypto';
 import { parseResumeData } from './onboarding/resume';
 
 // Allow bounded multipart headers/fields in addition to the PDF itself.
@@ -10,7 +9,6 @@ interface Dependencies {
   authorizeUpload?: (uid: string) => Promise<boolean>;
   reserveAttempt: (uid: string) => Promise<{ allowed: boolean; retryAfterSeconds: number }>;
   extract: (pdf: Buffer) => Promise<string>;
-  persist?: (uid: string, parsed: Record<string, unknown>, contentHash: string) => Promise<void>;
 }
 
 function failure(error: string, status: number, headers?: HeadersInit) {
@@ -96,8 +94,7 @@ export function createResumeExtractionHandler(deps: Dependencies) {
 
     try {
       const parsed = parseResumeData(JSON.parse(await deps.extract(pdf)));
-      if (deps.persist) await deps.persist(uid, parsed, createHash('sha256').update(pdf).digest('hex'));
-      return Response.json({ resume: parsed });
+      return Response.json({ resume: parsed }, { headers: { "Cache-Control": "private, no-store" } });
     } catch {
       return failure('Unable to extract this resume. Your existing resume is unchanged. Try again later.', 502);
     }
