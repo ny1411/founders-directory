@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
+import { validateCompanySubmission } from '../../src/lib/company-submission';
+import { storeCompanySubmission } from '../../src/lib/company-submission-store';
 import { companyCacheTag, normalizeCompanySlug } from '../../src/lib/company-query';
 
 const require = createRequire(import.meta.url);
@@ -16,6 +18,7 @@ const compiledAction = ts.transpileModule(actionSource, {
 type FixtureOptions = {
   verify?: (token: string, checkRevoked: boolean) => Promise<unknown>;
   failCommit?: boolean;
+  existingSlug?: boolean;
   botResult?: { allowed: boolean; message?: string };
 };
 
@@ -25,9 +28,10 @@ function fixture(options: FixtureOptions = {}) {
   const operations: string[] = [];
   const tokens: Array<[string, boolean]> = [];
   const writes: Array<{ ref: { id: string }; data: Record<string, unknown> }> = [];
-  const exports: { createCompany?: (data: FormData, token?: unknown) => Promise<{ error: string }> } = {};
+  const exports: { createCompany?: (data: FormData, token?: unknown) => Promise<{ error: string; fieldErrors?: Record<string, string> }> } = {};
   const batch = {
-    set(ref: { id: string }, data: Record<string, unknown>) {
+    async get(ref: { id?: string }) { return ref.id ? { exists: false } : { empty: !options.existingSlug }; },
+    create(ref: { id: string }, data: Record<string, unknown>) {
       operations.push('set');
       writes.push({ ref, data });
     },
@@ -53,11 +57,12 @@ function fixture(options: FixtureOptions = {}) {
         adminDb: {
           collection(name: string) {
             operations.push(`collection:${name}`);
-            return { doc: () => ({ id: `${name}-id` }) };
+            return { doc: (id?: string) => ({ id: id ?? `${name}-id` }), where: () => ({ limit: () => ({}) }) };
           },
-          batch() {
-            operations.push('batch');
-            return batch;
+          async runTransaction(callback: (transaction: typeof batch) => Promise<unknown>) {
+            const result = await callback(batch);
+            await batch.commit();
+            return result;
           },
         },
       };
@@ -68,6 +73,8 @@ function fixture(options: FixtureOptions = {}) {
           return options.botResult ?? { allowed: true, outcome: 'allowed' };
         },
       };
+      if (name === '@/lib/company-submission') return { validateCompanySubmission };
+      if (name === '@/lib/company-submission-store') return { storeCompanySubmission };
       if (name === '@/lib/company-query') return { companyCacheTag, normalizeCompanySlug };
       if (name === 'next/cache') return {
         revalidatePath: (path: string) => operations.push(`revalidate:${path}`),
@@ -147,8 +154,8 @@ test('an ordinary authenticated user saves the company and founders once and pre
   assert.deepEqual(action.tokens, [['fresh-token', true]]);
   assert.equal(action.writes.length, 3);
   assert.equal(action.writes[0].data.name, 'Authenticated Company');
-  assert.equal(action.writes[1].data.companyId, 'companies-id');
-  assert.equal(action.writes[2].data.companyId, 'companies-id');
+  assert.equal(action.writes[1].data.companyId, 'authenticated-company');
+  assert.equal(action.writes[2].data.companyId, 'authenticated-company');
   assert.equal(action.operations.filter(operation => operation === 'commit').length, 1);
   assert.ok(action.operations.includes('revalidate-tag:company-directory'));
   assert.ok(action.operations.includes('revalidate-tag:company:authenticated-company'));
@@ -161,4 +168,22 @@ test('an authenticated database failure returns a retryable error without redire
   const result = await action.createCompany(submission(), 'fresh-token');
   assert.equal(result.error, 'Could not save the company. Please try again.');
   assert.ok(!action.operations.some(operation => operation.startsWith('revalidate:')));
+});
+
+test('invalid server submissions produce field errors and never touch the database', async () => {
+  const action = fixture();
+  const form = submission();
+  form.set('employees', '50-100');
+  const result = await action.createCompany(form, 'fresh-token');
+  assert.match(result.error, /highlighted fields/);
+  assert.equal(action.writes.length, 0);
+  assert.ok(!action.operations.some(operation => operation.startsWith('collection:')));
+});
+
+test('existing slug returns a field error with no writes or cache invalidation', async () => {
+  const action = fixture({ existingSlug: true });
+  const result = await action.createCompany(submission(), 'fresh-token');
+  assert.equal(result.fieldErrors?.slug, 'This URL slug is already in use.');
+  assert.equal(action.writes.length, 0);
+  assert.ok(!action.operations.some(operation => operation.startsWith('revalidate')));
 });

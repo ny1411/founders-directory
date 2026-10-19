@@ -8,6 +8,8 @@ export interface Company {
   vcBacker: string | null;
   industry: string | null;
   employees: number | null;
+  /** Absent on legacy records; omitted submissions are stored as null. */
+  stage?: string | null;
   location: string | null;
   foundedYear: number | null;
   website: string | null;

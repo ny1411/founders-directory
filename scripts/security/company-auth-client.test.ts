@@ -42,6 +42,7 @@ function fixture(options: { refreshError?: boolean; pending?: boolean; error?: s
       };
       if (name === 'next/navigation') return { useRouter: () => ({ push() {} }) };
       if (name === '@/context/AuthContext') return { useAuth: () => ({ user: options.signedOut ? null : user, loading: false }) };
+      if (name === '@/lib/company-submission') return { MAX_FOUNDERS: 10 };
       if (name === '@/app/actions') return {
         async createCompany(data: FormData, token: string) {
           submissions.push({ data, token });
@@ -112,5 +113,5 @@ test('pending submission disables submit and add-founder controls and exposes er
   const addFounder = nodes.find(node => node.type === 'button' && node.props.type === 'button');
   assert.equal(addFounder?.props.disabled, true);
   const alert = nodes.find(node => node.props.role === 'alert');
-  assert.equal(alert?.props.children, 'Please sign in again.');
+  assert.equal((alert?.props.children as Element[])[0].props.children, 'Please sign in again.');
 });
