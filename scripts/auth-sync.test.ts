@@ -125,3 +125,18 @@ test('login sync rejects failed responses and can be retried with the same signe
   assert.equal(attempts, 2);
   assert.equal(getIdToken.mock.callCount(), 2);
 });
+
+test('login sync turns network failures into an actionable retry and keeps the signed-in user usable', async () => {
+  const user = { getIdToken: mock.fn(async () => 'firebase-id-token') };
+  let attempts = 0;
+  const request: typeof fetch = async () => {
+    if (++attempts === 1) throw new TypeError('Failed to fetch: private network diagnostic');
+    return Response.json({});
+  };
+  await assert.rejects(syncAuthenticatedUser(user, request), {
+    message: 'Could not finish signing in. Check your connection and try again.',
+  });
+  await syncAuthenticatedUser(user, request);
+  assert.equal(attempts, 2);
+  assert.equal(user.getIdToken.mock.callCount(), 2);
+});

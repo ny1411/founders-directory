@@ -5,10 +5,15 @@ export async function syncAuthenticatedUser(
   request: typeof fetch = fetch,
 ) {
   const token = await user.getIdToken();
-  const response = await request('/api/auth/sync', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let response: Response;
+  try {
+    response = await request('/api/auth/sync', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error('Could not finish signing in. Check your connection and try again.');
+  }
   if (!response.ok) {
     throw new Error('Could not finish signing in. Please try again.');
   }
