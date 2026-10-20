@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { addRuleArgs, missingRules, observationRules, projectId, teamId, teamSlug } from './firewall-rules.mjs';
+import { vercelInvocation } from './vercel-cli.mjs';
 
 // Default is a local plan. Only --stage writes drafts; there is intentionally no
 // publish, discard, attack-mode, system-mitigation or full-config PUT path.
@@ -10,8 +11,9 @@ if (stage.length && (stage.length !== 1 || stage[0] !== '--stage')) {
 if (!stage.length) {
   console.log(JSON.stringify({ projectId, teamId, stageOnly: true, rules: observationRules() }, null, 2));
 } else {
+  const { command, prefix } = vercelInvocation();
   function cli(args) {
-    const result = spawnSync('vercel', args, { encoding: 'utf8', timeout: 30_000, env: { ...process.env, VERCEL_TELEMETRY_DISABLED: '1' } });
+    const result = spawnSync(command, [...prefix, ...args], { encoding: 'utf8', timeout: 30_000, env: { ...process.env, VERCEL_TELEMETRY_DISABLED: '1' } });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(result.stderr || result.stdout || `CLI exited ${result.status}`);
     return result.stdout;

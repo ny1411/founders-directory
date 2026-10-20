@@ -41,6 +41,10 @@ deliberately migrate or remove it through a reviewed draft before staging
 ## Stage and inspect
 
 Install/authenticate Vercel CLI 64.5.0 or newer with access to team `ny1411`. Use a scoped token or `vercel login` in your own terminal. Do not commit tokens or CLI credentials.
+On Windows, use the current PR branch: the staging and Preview probe scripts
+launch npm's `vercel.cmd` package through Node so JSON conditions are passed
+without a shell. If you saw `spawnSync vercel ENOENT`, pull the latest branch
+commit and rerun; that error occurred before any draft was staged.
 
 ```bash
 node --test scripts/security/firewall-rules.test.mjs
