@@ -20,11 +20,13 @@ if (deployment.id !== deploymentId || deployment.projectId !== projectId ||
   throw new Error('Deployment must be READY, belong to founders-directory, and have a non-production target; no traffic sent.');
 }
 const origin = `https://${deployment.url}`;
-const headers = { 'x-fd-firewall-probe': key };
-// Protection bypass is intentionally not accepted: use the protected-deployment
-// access workflow if this preview requires authentication.
+const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+const accessHeaders = bypass ? { 'x-vercel-protection-bypass': bypass } : {};
+const headers = { ...accessHeaders, 'x-fd-firewall-probe': key };
+// The optional Vercel bypass only reaches this verified Preview deployment.
+// Never print it or use it against Production. It does not bypass BotID.
 async function request(path, method = 'GET', marked = true) {
-  const response = await fetch(`${origin}${path}`, { method, headers: marked ? headers : {}, redirect: 'manual', signal: AbortSignal.timeout(10_000) });
+  const response = await fetch(`${origin}${path}`, { method, headers: marked ? headers : accessHeaders, redirect: 'manual', signal: AbortSignal.timeout(10_000) });
   await response.body?.cancel();
   console.log(`${method} ${path}: ${response.status}`);
   return response.status;
