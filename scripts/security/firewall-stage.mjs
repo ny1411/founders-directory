@@ -31,7 +31,12 @@ if (!stage.length) {
   console.log(`Preserving ${existing.length} existing rules; staging ${rules.length} observation rules.`);
   for (const rule of rules) {
     try { console.log(cli(addRuleArgs(rule))); }
-    catch (error) { throw new Error(`Could not stage ${rule.name}: ${error.message}`, { cause: error }); }
+    catch (error) {
+      if (error.message.includes('Rate limiting is not available for this plan (401)')) {
+        throw new Error(`Could not stage ${rule.name}: Vercel rejected rate limiting for this plan (401). Stop here; retrying or publishing will not add the remaining rules. The existing published homepage observation rule is unchanged. Check the project's Firewall plan entitlement before attempting Preview 429 tests or Production enforcement.`);
+      }
+      throw new Error(`Could not stage ${rule.name}: ${error.message}`);
+    }
   }
   console.log(cli([...scope, 'firewall', 'rules', 'list', '--project', projectId, '--expand', '--json']));
   console.log(cli([...scope, 'firewall', 'diff', '--project', projectId, '--json']));

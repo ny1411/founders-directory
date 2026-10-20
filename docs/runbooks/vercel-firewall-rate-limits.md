@@ -4,12 +4,22 @@ Project: `founders-directory` (`prj_oxUZTfhN9aAIwtcABk8dcX00nFvt`), team `ny1411
 
 ## Current rollout status
 
-Recheck on October 20, 2026: project `prj_oxUZTfhN9aAIwtcABk8dcX00nFvt`
-has an active Firewall configuration. Managed Bot Protection is active with a
-`challenge` action. There are no custom rules or IP blocks, and no draft
-configuration was returned. The repository-defined rules have not been staged
-or published, and no Preview burst test or 24-hour observation is recorded.
-Inspect the configuration again before staging because the owner may change it.
+October 20, 2026: the owner published `FD #35 observe homepage`, a
+Production-only `GET /` rate-limit observation rule with exceeded action `log`.
+Managed Bot Protection remains in challenge mode. The next `FD #40` rule failed
+to stage with `Rate limiting is not available for this plan (401)`; `firewall
+diff` then reported no pending changes. No Preview rate-limit rule or 429 test
+has been published. Inspect the current configuration before taking action,
+because the owner may change it.
+
+**Plan blocker:** do not rerun `--stage`, add the Preview probe rule, switch the
+homepage rule to `rate_limit`, or expect an edge 429 until Vercel confirms this
+project can create and edit rate-limit rules. The already published log-only
+rule does not return 429. Ask Vercel which entitlement or plan is required;
+do not assume the existing rule can be edited simply because it was accepted
+earlier. Continue monitoring Bot Protection, Attack Mode, Function usage, and
+application-level quotas while resolving the entitlement. The remaining
+`FD #40` rules are proposed configuration, not active protection.
 
 The connector's update operation targets `PATCH /v1/security/firewall/config`, while the CLI implements safe draft staging as `PATCH /v1/security/firewall/config/draft`. Do not substitute the connector update or a whole-config PUT for draft staging: that could change the active managed Bot Protection settings. These repository artifacts are ready for an authenticated operator; they do not themselves protect production.
 
@@ -54,7 +64,7 @@ vercel --scope ny1411 firewall diff --project prj_oxUZTfhN9aAIwtcABk8dcX00nFvt -
 node scripts/security/firewall-stage.mjs --stage
 ```
 
-The default script only prints the proposed rules. `--stage` reads active/draft configuration, preserves all existing settings and unrelated rules, skips identical named rules, and refuses to overwrite a conflicting rule (including a tuned/enforced version). Native noninteractive `rules add --yes` stages drafts without publishing. It stops on authentication, entitlement, schema, or unexpected-response errors. If the project's config remains missing, initialize it in Vercel's Firewall UI, then rerun; do not overwrite unknown configuration to get past a 404. A partial batch is safe to rerun after inspection. Check rule quotas/plan entitlements if adding eleven rules is rejected; upgrade or deliberately select priorities rather than silently replacing existing protections.
+The default script only prints the proposed rules. `--stage` reads active/draft configuration, preserves all existing settings and unrelated rules, skips identical named rules, and refuses to overwrite a conflicting rule (including a tuned/enforced version). Native noninteractive `rules add --yes` stages drafts without publishing. It stops on authentication, entitlement, schema, or unexpected-response errors. If the project's config remains missing, initialize it in Vercel's Firewall UI, then rerun; do not overwrite unknown configuration to get past a 404. A partial batch is safe to rerun after inspection. The confirmed plan error above blocks further rate-limit staging; resolve it with Vercel before using this command again.
 
 Inspect every generated rule and the **entire** draft, including unrelated changes. For example:
 

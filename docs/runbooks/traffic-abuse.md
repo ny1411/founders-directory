@@ -2,13 +2,12 @@
 
 ## Current state
 
-On October 20, 2026, project `prj_oxUZTfhN9aAIwtcABk8dcX00nFvt` in team
-`ny1411` had an active Firewall configuration with managed Bot Protection in
-challenge mode, but no custom rules or IP blocks. There was no draft. The
-rule manifest targets this project; **no repository-defined rule has been
-staged, published, or tested in Preview**. Inspect the active and draft
-configuration before staging. Preserve the managed protection and any rules
-added since this check.
+On October 20, 2026, the owner published the Production-only `FD #35 observe
+homepage` rule with exceeded action `log`. Bot Protection is in challenge mode.
+The next rate-limit rule failed to stage with a plan-entitlement error (401),
+and there were no pending changes. No Preview rate-limit rule or edge 429 test
+is active. See [vercel-firewall-rate-limits.md](vercel-firewall-rate-limits.md)
+before staging or editing rules; the plan blocker must be resolved first.
 
 ## First hour of an incident
 
