@@ -74,19 +74,22 @@ export interface OnboardingState {
   account: OnboardingAccount;
   profile: ReusableProfile;
   goal: UserGoal | null;
+  /** Present only on an explicit authenticated resume-editor request. */
+  resumeEditor?: { data: ResumeData | null; unavailable: boolean };
 }
 
 export interface ProfileSource {
-  type: "resume_pdf" | "legacy_resume";
+  type: "resume_pdf" | "legacy_resume" | "resume_edit";
   status: "ready" | "failed";
   extractedData: Record<string, unknown>;
   schemaVersion: number;
   importedAt: string;
   updatedAt: string;
   contentHash: string;
+  derivedFrom?: string;
   model: string;
   consentAt: string | null;
-  consentBasis: "upload" | "legacy_migration";
+  consentBasis: "upload" | "legacy_migration" | "edit";
   rawFileRetention: "not_stored";
 }
 

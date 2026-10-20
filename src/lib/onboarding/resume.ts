@@ -50,8 +50,14 @@ function descriptions(value: unknown): string[] {
   );
 }
 
+function at<T>(field: string, parse: () => T): T {
+  try { return parse(); } catch (error) {
+    throw new Error(`${field}: ${error instanceof Error ? error.message : "Check this field"}`);
+  }
+}
+
 function items(value: unknown): ResumeItem[] {
-  return list(value).map((item) => {
+  return list(value).map((item, index) => at(`item ${index + 1}`, () => {
     const input = record(item);
     const result: ResumeItem = {};
     for (const key of [
@@ -64,16 +70,16 @@ function items(value: unknown): ResumeItem[] {
       "issuer",
       "date",
     ]) {
-      const text = string(input[key]);
+      const text = at(key, () => string(input[key]));
       if (text) result[key] = text;
     }
     if (input.description != null)
-      result.description = descriptions(input.description);
-    const url = safeResumeUrl(input.url);
+      result.description = at("description", () => descriptions(input.description));
+    const url = at("url (use a full https:// or http:// address)", () => safeResumeUrl(input.url));
     if (url) result.url = url;
     if (!Object.keys(result).length) throw new Error("Empty resume item");
     return result;
-  });
+  }));
 }
 
 export function parseResumeData(value: unknown): ResumeData {
@@ -82,7 +88,7 @@ export function parseResumeData(value: unknown): ResumeData {
     throw new Error("Resume extraction is too large");
   const result: ResumeData = {};
   for (const key of ["name", "location", "email", "phone"]) {
-    const text = string(input[key]);
+    const text = at(key, () => string(input[key]));
     if (text) result[key] = text;
   }
   if (input.skills != null)
@@ -90,13 +96,13 @@ export function parseResumeData(value: unknown): ResumeData {
       .map((skill) => string(skill)!)
       .filter(Boolean);
   if (input.links != null) {
-    result.links = list(input.links).map((link) => {
+    result.links = list(input.links).map((link, index) => at(`links item ${index + 1}`, () => {
       const entry = record(link);
       const url = safeResumeUrl(entry.url);
       if (!url) throw new Error("Resume link requires a URL");
       const label = string(entry.label);
       return label ? { label, url } : { url };
-    });
+    }));
   }
   for (const key of [
     "workExperience",
@@ -104,14 +110,14 @@ export function parseResumeData(value: unknown): ResumeData {
     "education",
     "certificates",
   ] as const) {
-    if (input[key] != null) result[key] = items(input[key]);
+    if (input[key] != null) result[key] = at(key, () => items(input[key]));
   }
   if (input.extracurriculars != null) {
     const entries = record(input.extracurriculars);
     if (Object.keys(entries).length > 20)
       throw new Error("Too many resume sections");
     result.extracurriculars = Object.fromEntries(
-      Object.entries(entries).map(([key, value]) => [key, items(value)]),
+      Object.entries(entries).map(([key, value]) => [key, at(`extracurriculars.${key}`, () => items(value))]),
     );
   }
   if (

@@ -11,6 +11,7 @@ import type {
   OnboardingState,
   OnboardingStep,
   UserIntent,
+  ResumeData,
 } from "./types";
 import {
   isGoalStage,
@@ -44,6 +45,8 @@ interface Store {
     summary: string,
   ): Promise<void>;
   complete(uid: string, state: OnboardingState): Promise<void>;
+  getResumeContext(uid: string, state: OnboardingState): Promise<ResumeData | null>;
+  saveResume(uid: string, value: Record<string, unknown>, pdfHash?: string, expectedState?: OnboardingState): Promise<void>;
 }
 
 type VerifyToken = (
@@ -66,16 +69,17 @@ export function toPublicOnboardingState(state: OnboardingState) {
   };
 }
 
-function response(state: OnboardingState) {
+function response(state: OnboardingState, resumeEditor?: OnboardingState["resumeEditor"]) {
   return Response.json({
     ...toPublicOnboardingState(state),
+    ...(resumeEditor ? { resumeEditor } : {}),
     readiness: getOnboardingReadiness(state),
     questionnaireVersion: QUESTIONNAIRE_VERSION,
     questionnaires: {
       shared: sharedQuestionnaire,
       intent: state.goal ? getIntentQuestionnaire(state.goal.type) : null,
     },
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }
 
 async function authenticate(request: Request, verifyToken: VerifyToken) {
@@ -93,7 +97,7 @@ async function authenticate(request: Request, verifyToken: VerifyToken) {
 }
 
 async function readBody(request: Request): Promise<Record<string, unknown>> {
-  const limit = 128 * 1024;
+  const limit = 256 * 1024;
   const reader = request.body?.getReader();
   if (!reader)
     throw new OnboardingValidationError("A JSON request body is required.");
@@ -189,7 +193,16 @@ export function createOnboardingHandler(
             state.goal.summary === input.summary.trim()) return response(state);
       }
       validateWriteContext(input, state);
-      if (profileOnly || input.action === "save_answers") {
+      if (!profileOnly && input.action === "load_resume") {
+        if (state.goal?.type !== "job")
+          throw new OnboardingValidationError("A job-search goal is required.");
+        const data = await store.getResumeContext(identity.uid, state);
+        return response(state, { data, unavailable: Boolean(state.profile.hasResume && !data) });
+      } else if (!profileOnly && input.action === "save_resume") {
+        if (!input.resume || typeof input.resume !== "object" || Array.isArray(input.resume))
+          throw new OnboardingValidationError("Review the resume fields before saving.");
+        await store.saveResume(identity.uid, input.resume as Record<string, unknown>, undefined, state);
+      } else if (profileOnly || input.action === "save_answers") {
         const answers = validateAnswers(state.goal!.type, input.answers);
         if (profileOnly && Object.keys(answers.goal).length)
           throw new OnboardingValidationError(

@@ -26,10 +26,12 @@ All endpoints require a Firebase bearer token; the server verifies revocation an
 - `set_step`: a valid next/back/edit step.
 - `save_summary`: a draft summary, including an empty draft while editing.
 - `complete`: confirm a nonempty summary from the review step.
+- `load_resume`: explicitly retrieve the owner's validated private source into the resume editor; returns `resumeEditor: { data, unavailable }` with `Cache-Control: private, no-store`.
+- `save_resume`: save a reviewed structured `resume` draft with the same revision checks as questionnaire edits. Invalid edits return HTTP 400; stale tabs return HTTP 409 without changing saved data.
 
 Every action except `select_intent` must include `goalId`, `profileVersion`, `goalRevision`, and `questionnaireVersion`. `PATCH /api/profile` (and its POST alias) accepts the same context and an `answers` patch restricted to shared profile questions. Writing `resumeText` is no longer supported.
 
-`POST /api/extract-resume` accepts a bounded PDF multipart upload for job goals and returns `{ resume: ResumeData }`. The validated extraction is persisted before success is returned. Imported facts prefill shared and job questions; replacing a resume updates previous automatic prefills while preserving explicit user edits.
+`POST /api/extract-resume` accepts a bounded PDF multipart upload for job goals and returns `{ resume: ResumeData }`. Extraction returns a private draft and does not save it. The user reviews and corrects structured fields before explicitly choosing Save resume. Cancel leaves the saved source unchanged. Saving computes a hash of the corrected data, records edit consent and the previous-source pointer, updates previous automatic prefills while preserving explicit questionnaire edits, and invalidates summary confirmation and the message cache through the profile version/resume hash. Existing sources can be reopened from the profile; unreadable legacy data offers a replacement editor or PDF reupload. Invalid edits remain in the editor; after a conflict, explicit reload fetches the latest revision before discarding the draft.
 
 `POST /api/generate-dm` reads the confirmed goal and, for job introductions only, its private resume source. Message cache identity includes owner, goal/intent, target, profile/goal versions, resume hash, questionnaire/playbook versions, channel, and action. Cache lookups use deterministic document IDs, so no new composite indexes are needed.
 

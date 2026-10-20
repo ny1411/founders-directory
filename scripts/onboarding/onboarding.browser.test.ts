@@ -32,7 +32,7 @@ function deferred() {
 
 test(
   "rendered onboarding exercises real APIs/persistence, delayed saves, refresh, and all intent flows",
-  { timeout: 120_000 },
+  { timeout: 180_000 },
   async (t) => {
     // Browser plugin not available. Bundle the production component without Firebase/OAuth;
     // use real API handlers + store with transactional in-memory persistence, and stub only the paid PDF model.
@@ -48,7 +48,7 @@ test(
       };
       const upload = async (file) => { const form=new FormData(); form.append("file",file);
         const response=await fetch("/api/extract-resume",{method:"POST",headers:{authorization:"Bearer " + uid},body:form});
-        const data=await response.json(); if(!response.ok) throw new Error(data.error); return request("GET"); };
+        const data=await response.json(); if(!response.ok) throw new Error(data.error); return data.resume; };
       createRoot(document.getElementById("root")).render(<OnboardingForm uid={uid} request={request} upload={upload} onExit={()=>{}} onLogout={async()=>{}} />);`,
         resolveDir: process.cwd(),
         loader: "tsx",
@@ -132,9 +132,10 @@ test(
               allowed: true,
               retryAfterSeconds: 0,
             }),
-            extract: async () => JSON.stringify(resumeFixture),
-            persist: (owner, data, hash) =>
-              f.store.saveResume(owner, data, hash),
+            extract: async () => JSON.stringify({ ...resumeFixture, extracurriculars: {
+              "open-source": [{ name: "Community Toolkit", duration: "2025 – Present", description: ["Contributed an accessible picker."], url: "https://github.com/example/toolkit/pull/12" }],
+              hackathons: [{ name: "Build Weekend", description: ["Won the accessibility prize."] }],
+            } }),
           })(request);
         } else {
           const input =
@@ -187,7 +188,7 @@ test(
       });
       page.on("pageerror", (error) => errors.push(error.message));
       page.on("console", (message) => {
-        if (message.type() === "error" && !message.text().includes("503"))
+        if (message.type() === "error" && !message.text().includes("503") && !message.text().includes("409"))
           errors.push(message.text());
       });
       await page.goto(`${origin}/profile?uid=${uid}`);
@@ -242,6 +243,37 @@ test(
                 mimeType: "application/pdf",
                 buffer: Buffer.from("%PDF-1.7\nBrowser fixture"),
               });
+              await page.getByRole("heading", { name: "Review resume details" }).waitFor();
+              const owner = getFixture(`browser-${intent}`);
+              assert.equal((await owner.state()).profile.hasResume, false, "extraction must not persist before review");
+              await page.getByRole("button", { name: "Cancel resume changes" }).click();
+              assert.equal((await owner.state()).profile.hasResume, false, "cancelled extraction must not persist");
+              await page.getByLabel("Choose a PDF resume").setInputFiles({
+                name: "resume.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\nBrowser fixture"),
+              });
+              await page.getByRole("heading", { name: "Review resume details" }).waitFor();
+              await page.getByRole("textbox", { name: "Name", exact: true }).first().fill("Corrected Ada");
+              await page.getByRole("group", { name: "Link 1", exact: true }).getByRole("textbox", { name: "Link URL" }).fill("javascript:alert(1)");
+              await page.getByRole("button", { name: "Save resume", exact: true }).click();
+              await page.getByRole("alert").filter({ hasText: "links item 1" }).waitFor();
+              assert.equal(await page.getByRole("textbox", { name: "Name", exact: true }).first().inputValue(), "Corrected Ada");
+              assert.equal((await owner.state()).profile.hasResume, false);
+              await page.getByRole("group", { name: "Link 1", exact: true }).getByRole("textbox", { name: "Link URL" }).fill("https://github.com/example");
+              await page.getByRole("heading", { name: "Open source contributions", exact: true }).last().waitFor();
+              await page.getByRole("link", { name: /Community Toolkit/ }).waitFor();
+              await page.setViewportSize({ width: 390, height: 844 });
+              assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "resume editor must fit mobile viewport");
+              if (process.env.ONBOARDING_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.ONBOARDING_SCREENSHOT_DIR, "resume-editor-mobile.png"), fullPage: true });
+              await page.setViewportSize({ width: 1280, height: 900 });
+              if (process.env.ONBOARDING_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.ONBOARDING_SCREENSHOT_DIR, "resume-editor-desktop.png"), fullPage: true });
+              await page.getByRole("button", { name: "Save resume", exact: true }).click();
+              await page.locator("#about").waitFor();
+              assert.equal((await owner.store.getResumeContext(owner.uid, await owner.state()))?.name, "Corrected Ada");
+              await page.getByRole("button", { name: "Review or edit resume details" }).click();
+              assert.equal(await page.getByRole("textbox", { name: "Name", exact: true }).first().inputValue(), "Corrected Ada");
+              await page.getByRole("textbox", { name: "Name", exact: true }).first().fill("Discard this edit");
+              await page.getByRole("button", { name: "Cancel resume changes" }).click();
+              assert.equal((await owner.store.getResumeContext(owner.uid, await owner.state()))?.name, "Corrected Ada");
               await page.locator("#about").waitFor();
               assert.match(
                 await page.locator("#links").inputValue(),
@@ -353,6 +385,27 @@ test(
           },
         );
       }
+
+      await t.test("stale resume edits remain available and explicit reload refreshes the revision", async () => {
+        const uid = "browser-resume-conflict";
+        const f = getFixture(uid);
+        await f.post({ action: "select_intent", intent: "job", stage: "actively_looking" });
+        await f.store.saveResume(uid, resumeFixture);
+        const page = await open(uid);
+        await page.getByRole("button", { name: "Review or edit resume details" }).click();
+        await page.getByRole("textbox", { name: "Name", exact: true }).first().fill("Keep this local correction");
+        assert.equal((await f.post({ action: "save_resume", resume: { ...resumeFixture, name: "Newer remote correction" } })).status, 200);
+        await page.getByRole("button", { name: "Save resume", exact: true }).click();
+        await page.getByRole("alert").filter({ hasText: "changed" }).waitFor();
+        assert.equal(await page.getByRole("textbox", { name: "Name", exact: true }).first().inputValue(), "Keep this local correction");
+        await page.getByRole("button", { name: "Reload saved resume (discard edits)", exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('input')?.value === "Newer remote correction");
+        await page.getByRole("textbox", { name: "Name", exact: true }).first().fill("Reviewed latest correction");
+        await page.getByRole("button", { name: "Save resume", exact: true }).click();
+        await page.locator("#about").waitFor();
+        assert.equal((await f.store.getResumeContext(uid, await f.state()))?.name, "Reviewed latest correction");
+        await page.close();
+      });
 
       await t.test("typing is debounced, unchanged blur is a no-op, and recovery clears", async () => {
         const uid = "browser-debounce";

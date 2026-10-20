@@ -77,8 +77,8 @@ export class OnboardingStore {
       extractedData: data,
       contentHash,
       schemaVersion: RESUME_SCHEMA_VERSION,
-      model: type === "legacy_resume" ? "legacy_unknown" : RESUME_MODEL,
-      consentBasis: type === "legacy_resume" ? "legacy_migration" : "upload",
+      model: type === "legacy_resume" ? "legacy_unknown" : type === "resume_edit" ? "user_edit" : RESUME_MODEL,
+      consentBasis: type === "legacy_resume" ? "legacy_migration" : type === "resume_edit" ? "edit" : "upload",
       consentAt: type === "legacy_resume" ? null : now,
       rawFileRetention: "not_stored",
       importedAt: now,
@@ -490,9 +490,13 @@ export class OnboardingStore {
     uid: string,
     value: Record<string, unknown>,
     pdfHash?: string,
+    expectedState?: OnboardingState,
   ) {
-    const data = parseResumeData(value);
-    const state = await this.load(uid);
+    let data: ResumeData;
+    try { data = parseResumeData(value); } catch (error) {
+      throw new OnboardingValidationError(error instanceof Error ? error.message : "Check your resume details.");
+    }
+    const state = expectedState ?? await this.load(uid);
     if (state.goal?.type !== "job")
       throw new OnboardingValidationError("A job-search goal is required.");
     const previous = await this.getResumeContext(uid, state);
@@ -516,7 +520,9 @@ export class OnboardingStore {
     };
     await this.mutate(uid, state, (current, transaction) => {
       const now = this.clock();
-      const { id, source } = this.source(data, "resume_pdf", now, pdfHash);
+      const { id, source } = this.source(data, expectedState ? "resume_edit" : "resume_pdf", now, pdfHash);
+      if (expectedState && current.profile.resumeSourceId && current.profile.resumeSourceId !== id)
+        source.derivedFrom = current.profile.resumeSourceId;
       const prefill = resumePrefill(data);
       const sameSource = current.profile.resumeSourceId === id;
       transaction.set(
@@ -557,6 +563,11 @@ export class OnboardingStore {
       .user.collection("sources")
       .doc(state.profile.resumeSourceId)
       .get();
-    return source.exists ? parseResumeData(source.data()?.extractedData) : null;
+    try {
+      return source.exists ? parseResumeData(source.data()?.extractedData) : null;
+    } catch {
+      // Corrupt legacy imports must not prevent the owner from replacing them.
+      return null;
+    }
   }
 }
