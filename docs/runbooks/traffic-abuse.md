@@ -2,14 +2,13 @@
 
 ## Current state
 
-On October 19, 2026, Vercel returned `404 Project not found` for saved project
-`prj_JeyY6SRrW4LOOSA3ggJceREyAHUQ` in team `ny1411`, and a repository-filtered
-project search returned no match. The rule manifest is ready, but **no rule was
-staged, published, or tested in Preview**. First identify the current Vercel
-project and update the identifiers in `scripts/security/firewall-rules.mjs`,
-`scripts/security/firewall-preview-probe.mjs`, and the firewall runbook. Inspect
-the active and draft Firewall configuration before staging anything. Do not
-initialize or replace an unknown configuration to bypass a 404.
+On October 20, 2026, project `prj_oxUZTfhN9aAIwtcABk8dcX00nFvt` in team
+`ny1411` had an active Firewall configuration with managed Bot Protection in
+challenge mode, but no custom rules or IP blocks. There was no draft. The
+rule manifest targets this project; **no repository-defined rule has been
+staged, published, or tested in Preview**. Inspect the active and draft
+configuration before staging. Preserve the managed protection and any rules
+added since this check.
 
 ## First hour of an incident
 
