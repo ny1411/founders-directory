@@ -15,7 +15,7 @@ if (!stage.length) {
   function cli(args) {
     const result = spawnSync(command, [...prefix, ...args], { encoding: 'utf8', timeout: 30_000, env: { ...process.env, VERCEL_TELEMETRY_DISABLED: '1' } });
     if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(result.stderr || result.stdout || `CLI exited ${result.status}`);
+    if (result.status !== 0) throw new Error(`CLI exited ${result.status}\n${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim());
     return result.stdout;
   }
   const scope = ['--non-interactive', '--scope', teamSlug];
@@ -29,7 +29,10 @@ if (!stage.length) {
   const existing = (data.draft ?? data.active)?.rules ?? [];
   const rules = missingRules(existing);
   console.log(`Preserving ${existing.length} existing rules; staging ${rules.length} observation rules.`);
-  for (const rule of rules) console.log(cli(addRuleArgs(rule)));
+  for (const rule of rules) {
+    try { console.log(cli(addRuleArgs(rule))); }
+    catch (error) { throw new Error(`Could not stage ${rule.name}: ${error.message}`, { cause: error }); }
+  }
   console.log(cli([...scope, 'firewall', 'rules', 'list', '--project', projectId, '--expand', '--json']));
   console.log(cli([...scope, 'firewall', 'diff', '--project', projectId, '--json']));
   console.log('Draft only. Owner must inspect every rule and review the complete draft before publishing.');
