@@ -1,5 +1,6 @@
 import type { IncomingHttpHeaders } from 'node:http';
 import { checkBotId } from 'botid/server';
+import { botIdConfiguration } from './bot-policy';
 
 export const BOT_VERIFICATION_REQUIRED_MESSAGE =
   'We could not verify this browser request. Refresh the page and try again.';
@@ -10,6 +11,7 @@ export type BotVerificationFailureReason =
   | 'missing'
   | 'invalid'
   | 'suspicious'
+  | 'configuration_error'
   | 'provider_error';
 
 export type BotVerificationResult =
@@ -55,7 +57,7 @@ function botEvent(
 function failure(
   reason: BotVerificationFailureReason,
 ): Exclude<BotVerificationResult, { allowed: true }> {
-  if (reason === 'provider_error') {
+  if (reason === 'provider_error' || reason === 'configuration_error') {
     return {
       allowed: false,
       outcome: 'verification_error',
@@ -99,7 +101,9 @@ function incomingHeaders(headers: Headers): IncomingHttpHeaders {
 }
 
 export function isBotVerificationEnabled(): boolean {
-  return process.env.BOTID_ENFORCEMENT_ENABLED === 'true';
+  const config = botIdConfiguration(process.env.BOTID_ENFORCEMENT_ENABLED, process.env.NEXT_PUBLIC_BOTID_ENABLED);
+  if (config.state === 'invalid') throw new Error('Invalid BotID flag pairing');
+  return config.state === 'enabled';
 }
 
 export async function verifyBotRequest(
@@ -107,7 +111,14 @@ export async function verifyBotRequest(
   route: string,
   options: VerificationOptions = {},
 ): Promise<BotVerificationResult> {
-  if (!(options.enabled ?? isBotVerificationEnabled())) {
+  let enabled: boolean;
+  try { enabled = options.enabled ?? isBotVerificationEnabled(); }
+  catch {
+    const result = failure('configuration_error');
+    botEvent(route, result.outcome, result.reason);
+    return result;
+  }
+  if (!enabled) {
     return { allowed: true, outcome: 'allowed' };
   }
 

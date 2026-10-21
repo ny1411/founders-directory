@@ -1,10 +1,13 @@
+import { admissionResponse, type AdmissionCheck } from './admission-policy';
 import { MAX_RESUME_BYTES, RESUME_SIZE_ERROR, RESUME_TYPE_ERROR } from './resume-upload';
 import { parseResumeData } from './onboarding/resume';
+import { providerBudgetResponse } from './provider-budget';
 
 // Allow bounded multipart headers/fields in addition to the PDF itself.
 export const MAX_RESUME_REQUEST_BYTES = MAX_RESUME_BYTES + 64 * 1024;
 
 interface Dependencies {
+  admit: AdmissionCheck;
   verifyToken: (token: string) => Promise<{ uid: string }>;
   authorizeUpload?: (uid: string) => Promise<boolean>;
   reserveAttempt: (uid: string) => Promise<{ allowed: boolean; retryAfterSeconds: number }>;
@@ -12,7 +15,9 @@ interface Dependencies {
 }
 
 function failure(error: string, status: number, headers?: HeadersInit) {
-  return Response.json({ error }, { status, headers });
+  const responseHeaders = new Headers(headers);
+  responseHeaders.set('Cache-Control', 'private, no-store');
+  return Response.json({ error }, { status, headers: responseHeaders });
 }
 
 export function createResumeExtractionHandler(deps: Dependencies) {
@@ -26,6 +31,9 @@ export function createResumeExtractionHandler(deps: Dependencies) {
     } catch {
       return failure('Your session has expired. Sign in again to upload your resume.', 401);
     }
+
+    const rejected = await admissionResponse(deps.admit, uid, req);
+    if (rejected) return rejected;
 
     if (deps.authorizeUpload) {
       try {
@@ -95,7 +103,9 @@ export function createResumeExtractionHandler(deps: Dependencies) {
     try {
       const parsed = parseResumeData(JSON.parse(await deps.extract(pdf)));
       return Response.json({ resume: parsed }, { headers: { "Cache-Control": "private, no-store" } });
-    } catch {
+    } catch (error) {
+      const rejected = providerBudgetResponse(error);
+      if (rejected) return rejected;
       return failure('Unable to extract this resume. Your existing resume is unchanged. Try again later.', 502);
     }
   };

@@ -3,6 +3,7 @@ import { boundedJson } from "../bounded-json";
 import type { Company, Founder } from "../types";
 import type { OnboardingState, ResumeData, UserIntent } from "./types";
 import { getOnboardingReadiness } from "./readiness";
+import { providerBudgetResponse } from "../provider-budget";
 
 export const PLAYBOOK_VERSION = 2;
 const rejectedCredentialCodes = new Set([
@@ -251,9 +252,14 @@ export function createMessageHandler(deps: Dependencies) {
         });
         return Response.json({ dmText: content });
       } finally {
-        if (lease && deps.release) await deps.release(key, lease);
+        if (lease && deps.release) {
+          try { await deps.release(key, lease); }
+          catch { console.warn("Unable to release message lease; waiting for expiry"); }
+        }
       }
-    } catch {
+    } catch (error) {
+      const rejected = providerBudgetResponse(error);
+      if (rejected) return rejected;
       console.error("Unable to generate message");
       return serverFailure();
     }

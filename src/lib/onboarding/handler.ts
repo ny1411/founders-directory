@@ -1,3 +1,4 @@
+import { admissionResponse, type AdmissionCheck } from "../admission-policy";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import { OnboardingConflictError, OnboardingValidationError } from "./errors";
 import { getOnboardingReadiness } from "./readiness";
@@ -145,11 +146,18 @@ function validateWriteContext(
 export function createOnboardingHandler(
   verifyToken: VerifyToken,
   store: Store,
+  admission: { read: AdmissionCheck; write: AdmissionCheck },
 ) {
   async function handle(request: Request, profileOnly = false) {
     try {
       const identity = await authenticate(request, verifyToken);
+      const rejected = await admissionResponse(admission.write, identity.uid, request);
+      if (rejected) return rejected;
       const input = await readBody(request);
+      if (!profileOnly && input.action === "load_resume") {
+        const readRejected = await admissionResponse(admission.read, identity.uid, request);
+        if (readRejected) return readRejected;
+      }
       if (!profileOnly && input.action === "select_intent") {
         if (!isUserIntent(input.intent) || !isGoalStage(input.stage))
           throw new OnboardingValidationError(
@@ -240,11 +248,11 @@ export function createOnboardingHandler(
 
   function failure(error: unknown) {
     if (error instanceof UnauthorizedError)
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
+      return Response.json({ error: "Unauthorized" }, { status: 401, headers: { "Cache-Control": "private, no-store" } });
     if (error instanceof OnboardingConflictError)
       return Response.json(
         { error: error.message, code: "conflict" },
-        { status: 409 },
+        { status: 409, headers: { "Cache-Control": "private, no-store" } },
       );
     if (
       error instanceof OnboardingValidationError ||
@@ -254,12 +262,12 @@ export function createOnboardingHandler(
         {
           error: error instanceof SyntaxError ? "Invalid JSON." : error.message,
         },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "private, no-store" } },
       );
     console.error("Unable to process onboarding:", error);
     return Response.json(
       { error: "Unable to process your profile. Try again later." },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "private, no-store" } },
     );
   }
 
@@ -267,6 +275,8 @@ export function createOnboardingHandler(
     GET: async (request: Request) => {
       try {
         const identity = await authenticate(request, verifyToken);
+        const rejected = await admissionResponse(admission.read, identity.uid, request);
+        if (rejected) return rejected;
         return response(await store.load(identity.uid));
       } catch (error) {
         return failure(error);

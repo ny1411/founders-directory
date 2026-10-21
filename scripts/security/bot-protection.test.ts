@@ -86,7 +86,9 @@ test('provider failures fail closed with a stable retryable response', async () 
 
 test('BotID enforcement is default-off until the deployment flag is enabled', async () => {
   const previous = process.env.BOTID_ENFORCEMENT_ENABLED;
+  const previousClient = process.env.NEXT_PUBLIC_BOTID_ENABLED;
   delete process.env.BOTID_ENFORCEMENT_ENABLED;
+  delete process.env.NEXT_PUBLIC_BOTID_ENABLED;
   let checks = 0;
   try {
     const result = await verifyBotRequest(new Headers(), '/api/protected', {
@@ -100,6 +102,8 @@ test('BotID enforcement is default-off until the deployment flag is enabled', as
   } finally {
     if (previous === undefined) delete process.env.BOTID_ENFORCEMENT_ENABLED;
     else process.env.BOTID_ENFORCEMENT_ENABLED = previous;
+    if (previousClient === undefined) delete process.env.NEXT_PUBLIC_BOTID_ENABLED;
+    else process.env.NEXT_PUBLIC_BOTID_ENABLED = previousClient;
   }
 });
 
