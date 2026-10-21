@@ -30,7 +30,11 @@ function fixture(options: FixtureOptions = {}) {
   const writes: Array<{ ref: { id: string }; data: Record<string, unknown> }> = [];
   const exports: { createCompany?: (data: FormData, token?: unknown) => Promise<{ error: string; fieldErrors?: Record<string, string> }> } = {};
   const batch = {
-    async get(ref: { id?: string }) { return ref.id ? { exists: false } : { empty: !options.existingSlug }; },
+    async get(ref: { id?: string }) { return ref.id ? { exists: false, data: () => undefined } : { empty: !options.existingSlug }; },
+    set(ref: { id: string }, data: Record<string, unknown>) {
+      operations.push('set');
+      writes.push({ ref, data });
+    },
     create(ref: { id: string }, data: Record<string, unknown>) {
       operations.push('set');
       writes.push({ ref, data });
@@ -152,10 +156,12 @@ test('an ordinary authenticated user saves the company and founders once and pre
     return true;
   });
   assert.deepEqual(action.tokens, [['fresh-token', true]]);
-  assert.equal(action.writes.length, 3);
+  assert.equal(action.writes.length, 4);
   assert.equal(action.writes[0].data.name, 'Authenticated Company');
   assert.equal(action.writes[1].data.companyId, 'authenticated-company');
   assert.equal(action.writes[2].data.companyId, 'authenticated-company');
+  assert.equal(action.writes[3].ref.id, 'companies-v1');
+  assert.deepEqual(action.writes[3].data, { version: 1, generation: null, revision: 1 });
   assert.equal(action.operations.filter(operation => operation === 'commit').length, 1);
   assert.ok(action.operations.includes('revalidate-tag:company-directory'));
   assert.ok(action.operations.includes('revalidate-tag:company:authenticated-company'));

@@ -1,6 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import type { parseCompany } from './yc-company';
 import { retry } from './yc-runner';
+import { prepareDirectoryIndexUpdate } from '../../src/lib/directory-index';
 
 export function retryableDatabaseError(error: unknown) {
   const code = (error as { code?: number | string })?.code;
@@ -25,6 +26,7 @@ export async function saveCompany(
     }
     const sameId = await transaction.get(companyRef);
     if (sameId.exists) throw new Error(`Company document ID conflict for ${slug}.`);
+    const updateIndex = await prepareDirectoryIndexUpdate(db, transaction, companyRef.id, details.company);
     transaction.create(companyRef, {
       ...details.company, id: companyRef.id, scrapeRunId: runId,
       createdAt: timestamp, updatedAt: timestamp,
@@ -36,6 +38,7 @@ export async function saveCompany(
         createdAt: timestamp, updatedAt: timestamp,
       });
     });
+    updateIndex();
     return true;
   }), `Save ${slug}`, { retryable: retryableDatabaseError, delayMs: retryDelayMs });
 }

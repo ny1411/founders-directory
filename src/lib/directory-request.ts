@@ -6,8 +6,8 @@ export const MAX_DIRECTORY_QUERY_LENGTH = 4096
 export const MAX_DIRECTORY_SEARCH_LENGTH = 100
 export const MAX_DIRECTORY_FACET_VALUES = 10
 export const MAX_DIRECTORY_TOTAL_FACETS = 20
-// The public snapshot is capped at 5,000 records and pages contain ten rows.
-export const MAX_DIRECTORY_PAGE = 500
+// Bound URL input independently of the collection size (one million companies).
+export const MAX_DIRECTORY_PAGE = 100_000
 
 const KEYS = ["q", "sort", "industry", "employees", "batch", "vc", "page"] as const
 const FACETS = ["industry", "employees", "batch", "vc"] as const
@@ -68,7 +68,7 @@ export function parseDirectoryRequest(search: string): DirectoryRequestResult {
   }
 
   const rawPage = input.get("page") ?? "1"
-  if (!/^[1-9]\d{0,2}$/.test(rawPage) || Number(rawPage) > MAX_DIRECTORY_PAGE) {
+  if (!/^[1-9]\d{0,5}$/.test(rawPage) || Number(rawPage) > MAX_DIRECTORY_PAGE) {
     return invalid("Invalid page number.")
   }
   if (rawPage !== "1") { params.page = rawPage; output.set("page", rawPage) }

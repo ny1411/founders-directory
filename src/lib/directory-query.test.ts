@@ -1,82 +1,82 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { CollectionReference } from "firebase-admin/firestore"
-import { loadDirectorySnapshot } from "./directory-query"
+import { buildDirectoryPage, loadDirectoryCompanies, type DirectoryIndex } from "./directory-page"
+import { toDirectoryIndexEntry } from "./directory-index"
+import { paginateCompanies } from "./company-pagination"
+import { matchesDirectoryFilters, parseDirectoryFilters } from "./directory-filters"
+import { memoryFirestore } from "../../scripts/directory/memory-firestore"
 
-interface Fixture {
-  id: string
-  slug: string
-  name: string
-  batch?: string | null
-  vcBacker?: string | null
-  privateNote?: string
+const companies = Array.from({ length: 6_013 }, (_, number) => ({
+  id: `id-${String(number).padStart(5, "0")}`, slug: `company-${String(Math.floor(number / 2)).padStart(5, "0")}`,
+  name: number % 3 ? `Business ${number}` : `10 By 10 ${number}`, industry: number % 4 ? "Healthcare" : null,
+  employees: number % 3 ? 10 : 600, batch: number % 2 ? "Winter 2026" : "Summer 2026",
+  vcBacker: number % 2 ? "YC" : "Other", tags: number % 3 ? ["B2B"] : ["Travel"],
+  description: "Card description", logoUrl: null, privateNote: "never serialize", founders: ["private"],
+}))
+const index: DirectoryIndex = {
+  entries: companies.map(company => toDirectoryIndexEntry(company.id, company)),
+  batches: ["Winter 2026", "Summer 2026"], vcs: ["YC", "Other"],
+}
+function fixture() {
+  return memoryFirestore(companies.map(company => [`companies/${company.id}`, company]))
 }
 
-function mockCollection(fixtures: Fixture[]) {
-  const calls: { method: string; args: unknown[] }[] = []
-  let selectedFields: string[] = []
-  let maximum = Infinity
-
-  const query = {
-    select: (...fields: string[]) => {
-      calls.push({ method: "select", args: fields })
-      selectedFields = fields
-      return query
-    },
-    orderBy: (...args: unknown[]) => {
-      calls.push({ method: "orderBy", args })
-      return query
-    },
-    limit: (value: number) => {
-      calls.push({ method: "limit", args: [value] })
-      maximum = value
-      return query
-    },
-    get: async () => {
-      calls.push({ method: "get", args: [] })
-      const sorted = [...fixtures].sort((left, right) => left.slug.localeCompare(right.slug)).slice(0, maximum)
-      return {
-        docs: sorted.map(fixture => ({
-          id: fixture.id,
-          data: () => Object.fromEntries(selectedFields
-            .filter(field => field in fixture)
-            .map(field => [field, fixture[field as keyof Fixture]])),
-        })),
-      }
-    },
+test("6,013 companies: cold first, later and descending pages each read exactly ten company documents", async () => {
+  for (const params of [{}, { page: "501" }, { sort: "desc", page: "2" }]) {
+    const f = fixture()
+    const result = await buildDirectoryPage(index, params, ids => loadDirectoryCompanies(f.db, ids))
+    const expected = paginateCompanies(companies, Number(params.page ?? 1), params.sort ?? "asc")
+    assert.deepEqual(result.companies.map(company => company.id), expected.companies.map(company => company.id))
+    assert.equal(result.totalCount, 6013)
+    assert.equal(result.totalPages, 602)
+    assert.deepEqual(f.reads, [{ collection: "companies", count: 10 }])
+    for (const company of result.companies) {
+      assert.equal("privateNote" in company, false)
+      assert.equal("founders" in company, false)
+    }
   }
-
-  return { collection: query as unknown as CollectionReference, calls }
-}
-
-test("loads one bounded, ordered public projection and derives filter options", async () => {
-  const { collection, calls } = mockCollection([
-    { id: "b", slug: "beta", name: "Beta", batch: "Summer 2025", vcBacker: "Other", privateNote: "secret" },
-    { id: "a", slug: "alpha", name: "Alpha", batch: "Winter 2026", vcBacker: "YC", privateNote: "secret" },
-    { id: "c", slug: "charlie", name: "Charlie", batch: "Winter 2026", vcBacker: "YC", privateNote: "secret" },
-  ])
-
-  const result = await loadDirectorySnapshot(collection, 10)
-
-  assert.deepEqual(result.companies.map(company => company.slug), ["alpha", "beta", "charlie"])
-  assert.deepEqual(result.batches, ["Winter 2026", "Summer 2025"])
-  assert.deepEqual(result.vcs, ["Other", "YC"])
-  assert.equal(result.companies.some(company => "privateNote" in company), false)
-  assert.deepEqual(calls.map(call => call.method), ["select", "orderBy", "limit", "get"])
-  assert.deepEqual(calls.find(call => call.method === "orderBy")?.args, ["slug", "asc"])
-  assert.deepEqual(calls.find(call => call.method === "limit")?.args, [11])
 })
 
-test("fails loudly instead of publishing a truncated directory", async () => {
-  const fixtures = Array.from({ length: 4 }, (_, index) => ({
-    id: String(index),
-    slug: `company-${index}`,
-    name: `Company ${index}`,
-  }))
-  const { collection } = mockCollection(fixtures)
+test("combined multi-select facets, prefix search and exact counts select IDs before any company reads", async () => {
+  const params = { industry: ["B2B", "Travel"], employees: ["1-10", "501+"],
+    vc: ["YC", "Other"], batch: ["Winter 2026", "Summer 2026"], q: " 10  BY 10 ", sort: "desc", page: "3" }
+  const f = fixture()
+  const result = await buildDirectoryPage(index, params, ids => loadDirectoryCompanies(f.db, ids))
+  const filters = parseDirectoryFilters(params, index)
+  const expected = paginateCompanies(companies.filter(company => matchesDirectoryFilters(company, filters)), 3, "desc")
+  assert.equal(result.totalCount, expected.totalCount)
+  assert.deepEqual(result.companies.map(company => company.id), expected.companies.map(company => company.id))
+  assert.deepEqual(f.reads, [{ collection: "companies", count: 10 }])
+})
 
-  await assert.rejects(
-    loadDirectorySnapshot(collection, 3),
-    /exceeds its 3-record snapshot limit/,
-  )
+test("all numbered pages preserve duplicate-slug ID ordering without missing or repeated companies", async () => {
+  const f = fixture()
+  const ids: string[] = []
+  for (let page = 1; page <= 602; page++) {
+    const result = await buildDirectoryPage(index, { page: String(page) }, selected => loadDirectoryCompanies(f.db, selected))
+    ids.push(...result.companies.map(company => company.id))
+  }
+  assert.equal(new Set(ids).size, 6013)
+  assert.deepEqual(ids, companies.map(company => company.id))
+  assert.ok(f.reads.every(read => read.count <= 10))
+})
+
+test("empty search reads no companies, stale page clamps to last page, batch reads are reordered", async () => {
+  const f = fixture()
+  const empty = await buildDirectoryPage(index, { q: "missing-company" }, ids => loadDirectoryCompanies(f.db, ids))
+  assert.deepEqual(empty, { companies: [], totalCount: 0, totalPages: 0, page: 1 })
+  assert.deepEqual(f.reads, [])
+  const last = await buildDirectoryPage(index, { page: "100000" }, ids => loadDirectoryCompanies(f.db, ids))
+  assert.equal(last.page, 602)
+  assert.equal(last.companies.length, 3)
+  assert.deepEqual(f.reads, [{ collection: "companies", count: 3 }])
+})
+
+test("oversized, duplicate and invalid ID batches fail before datastore work; stale index fails closed", async () => {
+  const f = fixture()
+  for (const ids of [companies.slice(0, 11).map(company => company.id), ["same", "same"], ["a/b"], [""]]) {
+    await assert.rejects(loadDirectoryCompanies(f.db, ids), /Invalid directory page IDs/)
+  }
+  assert.deepEqual(f.reads, [])
+  await assert.rejects(loadDirectoryCompanies(f.db, ["deleted-company"]), /out of sync/)
 })

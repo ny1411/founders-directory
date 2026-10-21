@@ -190,10 +190,11 @@ function fakeStore(options: { legacyRunId?: string; loseAcknowledgement?: boolea
       const pending = new Map<string, Record<string, unknown>>();
       const transaction = {
         get: async (ref: { path?: string }) => {
-          if (ref.path) return { exists: writes.has(ref.path) };
+          if (ref.path) return { exists: writes.has(ref.path), data: () => writes.get(ref.path!) };
           const entries = [...writes].filter(([path, data]) => path.startsWith('companies/') && data.slug === 'a');
           return { empty: !entries.length, docs: entries.map(([, data]) => ({ get: (key: string) => data[key] })) };
         },
+        set: (ref: { path: string }, data: Record<string, unknown>) => { pending.set(ref.path, data); },
         create: (ref: { path: string }, data: Record<string, unknown>) => {
           assert.ok(!writes.has(ref.path), 'must not overwrite an existing document');
           pending.set(ref.path, data);
@@ -216,11 +217,11 @@ test('lost commit acknowledgement retries without duplicating companies or found
   const details = parseCompany(profile({ slug: 'a', name: 'A',
     founders: [{ full_name: 'Real Founder', user_id: 1 }] }), company('a'));
   assert.equal(await saveCompany(db, details, 'run-1', 0), true);
-  assert.equal(writes.size, 2);
+  assert.equal(writes.size, 3);
   assert.equal(writes.get('companies/a')?.id, 'a');
   assert.equal(writes.get('founders/a-0')?.companyId, 'a');
   assert.equal(await saveCompany(db, details, 'run-2', 0), false);
-  assert.equal(writes.size, 2);
+  assert.equal(writes.size, 3);
 });
 
 test('existing random document IDs are skipped during persistence', async () => {
