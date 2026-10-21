@@ -24,8 +24,8 @@ Admin SDK:
 | `apiQuota`, `apiLeases`, `resumeExtractionUsage` | Server admission, concurrency and usage reservations |
 | Unknown collections or deeper subcollections | Denied to direct clients by the recursive catch-all |
 
-These rules are a prototype for the repository's current server-only access
-model. They do not add a rules-level admin role or trust client-provided UID,
+These rules implement the repository's current server-only access model. They
+do not add a rules-level admin role or trust client-provided UID,
 owner, role, or custom claims. They deliberately do not define client schema
 validators: no client create or update is permitted at all. Existing field
 validation and authorization remain in server handlers. Admin SDK access bypasses
@@ -39,7 +39,7 @@ rules model and inventory any clients outside this repository.
 
 ## Reproduce the authorization tests
 
-Prerequisites: Node.js 20+ compatible with Firebase CLI 15.34.0, npm, Java 21+,
+Prerequisites: Node.js 22+ compatible with Firebase CLI 15.34.0, npm, Java 21+,
 Linux/macOS or WSL, and an unused loopback port 8080.
 
 ```sh
@@ -143,9 +143,3 @@ authenticated allow as an error workaround.
   "findings": []
 }
 ```
-
-I've set up prototype Security Rules to keep the data in Firestore safe. They
-are designed to be secure for this server-only access model because every direct
-client read and write is denied, including owner and privileged-claim requests.
-However, you should review and verify them before broadly sharing your app. If
-you'd like, I can help you harden these rules.
