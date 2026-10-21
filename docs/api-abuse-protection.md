@@ -77,3 +77,95 @@ UID policies. Edge pre-authentication limits and actual Firewall enforcement rem
 #40/#47; outside Vercel all callers share the conservative `unavailable` IP bucket.
 Do not replace it with client-controlled forwarding headers. No deployment flag
 can silently disable these admission checks.
+
+## Shared paid-provider budgets and concurrency (#60)
+
+`src/lib/provider-budget.ts` reserves aggregate capacity in one Firestore
+transaction immediately around actual provider submission. DM generation and
+resume extraction share the Gemini budget. Each Saleshandy enrichment worker POST
+uses the Saleshandy budget; enqueueing a job and read-only status GETs do not
+reserve paid capacity. Existing authenticated UID/IP quotas, admission policies,
+message caches, idempotency keys and per-job leases still run independently.
+Rotating users or IP addresses cannot create another aggregate budget.
+
+The `PROJECT` scope means **all deployments using the same Firestore database**.
+Preview and Production share these counters if configured with that same database.
+Another database, another application using the provider key, or direct provider
+calls are outside this scope. Provider-side spend caps and operational monitoring
+remain prerequisites in #47.
+
+Server-only optional environment variables and conservative defaults:
+
+| Scope | Hourly units | Daily units | Concurrent submissions |
+| --- | --- | --- | --- |
+| `PROJECT` | 200 | 1,000 | 5 |
+| `GEMINI` | 150 | 750 | 4 |
+| `SALESHANDY` | 50 | 250 | 2 |
+
+For each scope, configure `PROVIDER_BUDGET_<SCOPE>_HOURLY`,
+`PROVIDER_BUDGET_<SCOPE>_DAILY` and `PROVIDER_BUDGET_<SCOPE>_CONCURRENCY`.
+Missing values use the table. Explicit values must be positive decimal integers;
+units cannot exceed 1,000,000 and concurrency cannot exceed 100. Empty strings,
+zero, negative/fractional values, exponential notation and oversized values fail
+closed with HTTP 503. Limits need no new deployment secrets.
+`PROVIDER_WORK_ENABLED=false` stops all new paid submissions;
+`GEMINI_WORK_ENABLED=false` or `SALESHANDY_WORK_ENABLED=false` stops that provider.
+Omitted switches default to enabled; only literal `true`/`false` are accepted.
+Contact enrichment retains its independent default-off enablement prerequisites.
+Kill switches do not cancel in-flight work or disable safe bounded status reads.
+Deploy environment changes to every deployment sharing these budgets: mixed
+configurations may enforce different ceilings against the same counters.
+
+One DM costs one budget unit; one resume costs five; enrichment costs one per
+founder in the normalized batch (up to five), including batches submitted as a
+single HTTP request. The shared project total adds those units across providers.
+These are conservative work estimates, **not token metering or dollar guarantees**;
+provider prices, input/output size and billing semantics can differ. Review
+legitimate traffic and billing before raising limits. Project/provider hourly and
+daily windows are shared fixed windows anchored by their first reservation;
+changing an operation, UID or IP never starts a fresh window. Boundary bursts can
+consume allowance at the end and beginning of adjacent windows.
+
+The transaction checks all four hour/day counters plus both concurrency ceilings
+before changing any of them. Denied reservations charge nothing. Successful
+reservations count permanently for the window, even for timeouts, invalid model
+output, provider errors, crashes or a failed intent write: billed work may be
+ambiguous and there is no safe refund. Cache hits, concurrent duplicate messages,
+idempotent enrichment retries and provider GET polling cause no new reservation.
+A cache miss after a previous ambiguous Gemini attempt is a new, charged attempt;
+the SDK itself never retries a paid call.
+
+Global and provider leases share one random ownership token, expire after 120
+seconds, and release only that token. Expired owners cannot remove a replacement
+owner's lease. A cleanup failure retains the reservation until expiry, preserves
+the original response, and never refunds units. Gemini uses a 60-second SDK timeout
+and explicit `retryOptions: { attempts: 1 }` for both operations. Saleshandy POSTs
+have a 10-second fetch timeout and no automatic retry. A deadline guard requires
+a full 60 seconds to remain before starting work, after any asynchronous work
+inside a paid callback. A delayed write therefore cannot start a POST under an
+expired lease. No paid callback may add asynchronous pre-call
+work without rechecking its supplied guard immediately before HTTP submission.
+
+The worker atomically claims `queued` → `submitting` under its current job lease
+**before** reserving the global budget. Only the claim winner reserves/submits; a
+delayed stale delivery cannot charge again or overwrite the replacement worker.
+The claim requires at least 15 seconds left on the 90-second job lease; a second
+deadline check immediately before POST also handles a slow global reservation.
+Budget/store/config/kill-switch rejection produces a terminal, proved-unsubmitted
+job; status returns private 429/503 with `Retry-After` and `code: PROVIDER_BUDGET_REJECTED`. The UI shows that
+retry guidance and clears its idempotency key only for this authenticated terminal
+state, allowing a later user retry to start a new job. Network failures, ordinary
+admission limits and ambiguous provider failures retain the original key. A crash
+in `submitting`, or an ambiguous provider POST, remains terminal and never repeats
+the paid POST. Polls remain bounded to 15 read-only attempts per job and the
+15-minute job lifetime; they do not occupy a paid concurrency slot between polls.
+
+DM/resume exhaustion or global concurrency saturation returns private HTTP 429;
+invalid config, disabled provider or unavailable/corrupt quota storage returns
+private HTTP 503. Both include safe `Retry-After` (1–86,400 seconds) and
+`code: PROVIDER_LIMIT`. No provider call happens on failed admission. Budgets and
+leases reuse server-only `apiQuota`/`apiLeases` with hashed deterministic document
+IDs and the existing `deleteAfter` TTL policy; no client identity, request body,
+resume or contact data is stored there. TTL is housekeeping, not the enforcement
+clock. Counters remain enforced without physical deletion. Logs contain only
+provider, operation, outcome and safe rejection reason, never provider payloads.

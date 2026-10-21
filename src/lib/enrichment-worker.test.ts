@@ -24,6 +24,7 @@ function fixture(status: EnrichmentJob['status'] = 'queued') {
     enabled: () => enabled,
     get: async () => ({...job}),
     update: async (_id, update) => { Object.assign(job, update); },
+    claimSubmission: async () => {if(job.status !== 'queued') return false; job.status = 'submitting'; return true;},
     targets: async () => ({
       company: {id: 'company', website: 'https://company.example'} as Company,
       founders: [{id: 'one', companyId: 'company', name: 'One Founder', linkedinUrl: 'https://linkedin.com/in/one'} as Founder],
@@ -38,6 +39,7 @@ function fixture(status: EnrichmentJob['status'] = 'queued') {
       if (locks.get(key) === token) locks.delete(key);
     },
     enqueue: async (_id, step) => { enqueued.push(step); },
+    runPaid: async (_units, submit) => submit(() => {}),
     provider: async (path, init) => {
       requests.push({path, init});
       if (init?.method === 'POST') assert.equal(job.status, 'submitting', 'intent must be durable before the paid POST');

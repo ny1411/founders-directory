@@ -1,16 +1,20 @@
 import type { EnrichmentJob } from './enrichment-handler';
 import type { Company, Founder } from './types';
+import { ProviderBudgetError } from './provider-budget';
 
 interface ProviderData {payload?: {requestId?: unknown; status?: string; results?: unknown[]}}
 interface Dependencies {
   enabled(): boolean;
+  clock?(): number;
   get(id: string): Promise<EnrichmentJob | null>;
   update(id: string, value: Partial<EnrichmentJob>): Promise<void>;
+  claimSubmission(id: string, workerToken: string): Promise<boolean>;
   targets(ids: string[], slug: string): Promise<{company: Company; founders: Founder[]} | null>;
   acquire(key: string, ttlMs: number): Promise<string | null>;
   release(key: string, token: string): Promise<void>;
   enqueue(id: string, step: number): Promise<unknown>;
   provider(path: string, init?: RequestInit): Promise<ProviderData>;
+  runPaid<T>(units: number, submit: (assertFresh: () => void) => Promise<T>): Promise<T>;
 }
 export function createEnrichmentProcessor(deps: Dependencies) {
   async function finish(id: string, job: EnrichmentJob, value: Partial<EnrichmentJob>) {
@@ -18,9 +22,11 @@ export function createEnrichmentProcessor(deps: Dependencies) {
     await deps.release(`enrichment-user:${job.uid}`, job.userLease);
     console.info(JSON.stringify({event: 'enrichment_finished', jobId: id, status: value.status, reason: value.reason}));
   }
+  const clock = () => (deps.clock ?? Date.now)();
   return async (id: string) => {
     if (!deps.enabled()) throw new Error('ENRICHMENT_DISABLED');
     if (!/^[a-f0-9]{64}$/.test(id)) return;
+    const workerDeadline = clock() + 90_000;
     const token = await deps.acquire(`enrichment-job:${id}`, 90_000);
     if (!token) throw new Error('JOB_BUSY');
     try {
@@ -30,7 +36,7 @@ export function createEnrichmentProcessor(deps: Dependencies) {
         await deps.release(`enrichment-user:${job.uid}`, job.userLease);
         return;
       }
-      if (job.expiresAt < Date.now()) return finish(id, job, {status: 'failed', reason: 'JOB_EXPIRED'});
+      if (job.expiresAt < clock()) return finish(id, job, {status: 'failed', reason: 'JOB_EXPIRED'});
       if (job.status === 'submitting') return finish(id, job, {status: 'failed', reason: 'SUBMISSION_UNCERTAIN'});
       if (job.status === 'queued') {
         const target = await deps.targets(job.founderIds, job.companySlug);
@@ -39,15 +45,35 @@ export function createEnrichmentProcessor(deps: Dependencies) {
           linkedin_url: target.founders.filter(f => f.linkedinUrl).map(f => f.linkedinUrl),
           full_name_with_company: target.founders.filter(f => !f.linkedinUrl).map(f => ({first_name: f.name.split(' ')[0], last_name: f.name.split(' ').slice(1).join(' '), company_website: target.company.website})),
         };
-        // Persist intent before the paid call; ambiguous submission must never
-        // retry because the upstream offers no idempotency guarantee.
-        await deps.update(id, {status: 'submitting'});
+        // Claim queued -> submitting atomically under the live worker lease.
+        // Slow/stale deliveries cannot overwrite a replacement owner or charge twice.
+        if (!await deps.claimSubmission(id, token)) return;
+        let submitted: boolean;
         try {
-          const data = await deps.provider('/enrich/contact', {method: 'POST', body: JSON.stringify(payload)});
-          const requestId = data.payload?.requestId;
-          if (typeof requestId !== 'string' || !/^[\w-]{1,200}$/.test(requestId)) throw new Error('INVALID_PROVIDER_RESPONSE');
-          await deps.update(id, {status: 'polling', requestId, polls: 0});
-        } catch { return finish(id, job, {status: 'failed', reason: 'PROVIDER_SUBMISSION_FAILED'}); }
+          submitted = await deps.runPaid(job.founderIds.length, async (assertFresh) => {
+            // The sole durable claim winner can spend. Ambiguous POSTs never retry.
+            assertFresh();
+            if (clock() + 15_000 >= workerDeadline) throw new ProviderBudgetError(503, 'concurrency', 30);
+            try {
+              const data = await deps.provider('/enrich/contact', {method: 'POST', body: JSON.stringify(payload)});
+              const requestId = data.payload?.requestId;
+              if (typeof requestId !== 'string' || !/^[\w-]{1,200}$/.test(requestId)) throw new Error('INVALID_PROVIDER_RESPONSE');
+              await deps.update(id, {status: 'polling', requestId, polls: 0});
+              return true;
+            } catch {
+              await finish(id, job, {status: 'failed', reason: 'PROVIDER_SUBMISSION_FAILED'});
+              return false;
+            }
+          });
+        } catch (error) {
+          if (error instanceof ProviderBudgetError) return finish(id, job, {
+            status: 'failed', reason: 'PROVIDER_BUDGET_REJECTED',
+            providerBudgetStatus: error.status, retryAfterSeconds: error.retryAfterSeconds,
+          });
+          throw error;
+        }
+        // A failed/ambiguous paid submission is terminal, even if release failed.
+        if (!submitted) return;
         await deps.enqueue(id, 1);
         return;
       }

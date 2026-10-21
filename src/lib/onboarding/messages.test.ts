@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ProviderBudgetError, withProviderBudget } from "../provider-budget";
+import { memoryBudgetDb } from "../../../scripts/security/provider-budget-fixture";
 import { ColdDmErrorPanel } from "../../components/cold-dm-error-panel";
 import type { Company, Founder } from "../types";
 import { fixture, resumeFixture } from "../../../scripts/onboarding/fixture";
@@ -527,4 +529,36 @@ test("expired-session message UI exposes an actionable sign-in path", () => {
   assert.ok(button);
   (button.props.onClick as () => void)();
   assert.equal(recoveries, 1);
+});
+
+
+test("global paid-budget errors preserve status and Retry-After even when message-lease cleanup also fails", async () => {
+  const f = fixture(); await complete(f, "sell_services");
+  for (const status of [429, 503] as const) {
+    const handler = createMessageHandler({
+      verifyToken: async () => ({uid: f.uid}), load: () => f.state(),
+      getResume: async () => null, getTarget: async () => target, getCached: async () => null,
+      acquire: async () => "owner", release: async () => {throw new Error("storage unavailable");},
+      save: async () => assert.fail("must not cache rejected work"),
+      generate: async () => {throw new ProviderBudgetError(status, status === 429 ? "quota" : "storage", 30);},
+    });
+    const response = await handler(request("Bearer token"));
+    assert.equal(response.status, status); assert.equal(response.headers.get("retry-after"), "30");
+    assert.equal((await response.json()).code, "PROVIDER_LIMIT");
+  }
+});
+
+
+test("real DM handler cache replay consumes no additional shared provider capacity", async () => {
+  const f = fixture(); await complete(f, "sell_services");
+  const budget = memoryBudgetDb(); let cached: string | null = null; let paidCalls = 0;
+  const handler = createMessageHandler({
+    verifyToken: async () => ({uid: f.uid}), load: () => f.state(),
+    getResume: async () => null, getTarget: async () => target, getCached: async () => cached,
+    save: async (_key, value) => {cached = value.content as string;},
+    generate: async () => withProviderBudget(budget.db, "dm", async () => {paidCalls++; return "one draft";}),
+  });
+  assert.equal((await handler(request("Bearer token"))).status, 200);
+  assert.equal((await handler(request("Bearer token"))).status, 200);
+  assert.equal(paidCalls, 1); assert.deepEqual(budget.units(), [1, 1, 1, 1]);
 });

@@ -82,3 +82,18 @@ test('provider calls have explicit timeout and ambiguous paid failures are surfa
   }), {name: 'TimeoutError'});
   assert.equal(attempts, 1);
 });
+
+
+test('authenticated terminal pre-submission denial returns explicit retry-safe code and Retry-After', async () => {
+  for (const status of [429, 503] as const) {
+    const handlers = createEnrichmentHandlers({
+      verify: async () => ({uid: 'owner'}), quota: async () => ({allowed: true, retryAfterSeconds: 0}),
+      authorize: async () => true, start: async () => null,
+      status: async () => ({status: 'failed', reason: 'PROVIDER_BUDGET_REJECTED', providerBudgetStatus: status, retryAfterSeconds: 120, expiresAt: Date.now() + 1000} as EnrichmentJob),
+    });
+    const response = await handlers.GET(request(), 'a'.repeat(64));
+    assert.equal(response.status, status); assert.equal(response.headers.get('retry-after'), '120');
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    const body = await response.json(); assert.equal(body.code, 'PROVIDER_BUDGET_REJECTED'); assert.match(body.error, /120 seconds/);
+  }
+});

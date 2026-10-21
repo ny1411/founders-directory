@@ -217,6 +217,9 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
         });
         const response = await fetch(data.statusUrl, {headers: {Authorization: `Bearer ${await user.getIdToken()}`}, signal: controller.signal, cache: 'no-store'});
         job = await response.json();
+        // Only this authenticated terminal state proves no paid POST occurred.
+        // Keep the same key for network failures and ambiguous provider errors.
+        if (job.status === 'failed' && job.code === 'PROVIDER_BUDGET_REJECTED' && [429, 503].includes(response.status)) enrichmentRequestRef.current = null;
         if (!response.ok) throw new Error(job.error || 'Contact lookup temporarily unavailable.');
       }
       if (job.status === 'failed') throw new Error('Contact lookup failed. Please try again later.');

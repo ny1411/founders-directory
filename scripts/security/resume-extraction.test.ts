@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Firestore } from 'firebase-admin/firestore';
 import { createResumeExtractionHandler, MAX_RESUME_REQUEST_BYTES } from '../../src/lib/resume-extraction-handler';
+import { ProviderBudgetError } from '../../src/lib/provider-budget';
 import { MAX_RESUME_BYTES } from '../../src/lib/resume-upload';
 import { reserveResumeExtractionAttempt, RESUME_USAGE_WINDOW_MS } from '../../src/lib/resume-extraction-usage';
 
@@ -229,4 +230,18 @@ test('transaction retry evaluates the clock after reading current persisted stat
   } as unknown as Firestore;
   await reserveResumeExtractionAttempt(db, 'user', () => { events.push('clock'); return 1000; });
   assert.deepEqual(events, ['read', 'clock', 'write', 'read', 'clock', 'write']);
+});
+
+
+test('resume global provider rejection preserves safe HTTP status and retry guidance', async () => {
+  for (const status of [429, 503] as const) {
+    const handler = createResumeExtractionHandler({
+      admit: async () => ({allowed: true, retryAfterSeconds: 1}), verifyToken: async () => ({uid: 'owner'}),
+      reserveAttempt: async () => ({allowed: true, retryAfterSeconds: 0}),
+      extract: async () => {throw new ProviderBudgetError(status, status === 429 ? 'quota' : 'storage', 60);},
+    });
+    const response = await handler(upload());
+    assert.equal(response.status, status); assert.equal(response.headers.get('retry-after'), '60');
+    assert.equal((await response.json()).code, 'PROVIDER_LIMIT');
+  }
 });
