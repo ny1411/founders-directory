@@ -1,3 +1,5 @@
+import { normalizeImageUrl } from './image-url'
+
 /** The same limits apply to browser forms and independently called server actions. */
 export const MAX_FOUNDERS = 10
 export type CompanySubmissionResult = { error: string; fieldErrors?: Record<string, string> }
@@ -44,12 +46,19 @@ export function validateCompanySubmission(form: FormData):
     }
     return number
   }
+  function image(key: string) {
+    const value = text(key, 2048)
+    if (!value) return null
+    const normalized = normalizeImageUrl(value)
+    if (!normalized) errors[key] = 'Use a supported YC or Clearbit image URL, a site image path, or leave this blank.'
+    return normalized
+  }
   const name = text('name', 200, true) ?? ''
   const slug = (text('slug', 200, true) ?? '').toLowerCase()
   if (slug === 'new') errors.slug = 'This URL slug is reserved. Choose a different slug.'
   if (slug && !/^[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?$/.test(slug)) errors.slug = 'Use letters, numbers, and hyphens; start and end with a letter or number.'
   const company = {
-    name, slug, description: text('description', 10000), website: url('website'), logoUrl: url('logoUrl'),
+    name, slug, description: text('description', 10000), website: url('website'), logoUrl: image('logoUrl'),
     vcBacker: text('vcBacker', 200), industry: text('industry', 200), employees: integer('employees', Number.MAX_SAFE_INTEGER),
     location: text('location', 300), foundedYear: integer('foundedYear', new Date().getUTCFullYear() + 1, 1000),
     stage: text('stage', 100), twitterUrl: url('twitterUrl'), linkedinUrl: url('linkedinUrl'),
@@ -67,7 +76,7 @@ export function validateCompanySubmission(form: FormData):
     const email = text(`${prefix}email`, 254)
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors[`${prefix}email`] = 'Enter a valid email address.'
     return { name: text(`${prefix}name`, 200, true) ?? '', role: text(`${prefix}role`, 200), email,
-      phone: text(`${prefix}phone`, 50), avatarUrl: url(`${prefix}avatarUrl`), twitterUrl: url(`${prefix}twitterUrl`),
+      phone: text(`${prefix}phone`, 50), avatarUrl: image(`${prefix}avatarUrl`), twitterUrl: url(`${prefix}twitterUrl`),
       linkedinUrl: url(`${prefix}linkedinUrl`), bio: text(`${prefix}bio`, 5000) }
   })
   return Object.keys(errors).length ? { fieldErrors: errors } : { data: { company, founders } }

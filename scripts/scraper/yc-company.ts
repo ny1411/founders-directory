@@ -55,7 +55,8 @@ export function parseCompany(html: string, listing: YCCompany) {
       website: data.website || listing.website || null,
       twitterUrl: data.twitter_url || null,
       linkedinUrl: data.linkedin_url || null,
-      // Small logos have stable URLs; full-size page logos expire in an hour.
+      // Enforce the shared source policy before storage; prefer stable small
+      // logos, and reject unapproved page images before trying the listing.
       logoUrl: normalizeImageUrl(data.small_logo_url)
         ?? normalizeImageUrl(listing.small_logo_thumb_url),
       foundedYear: Number.isFinite(data.year_founded) ? data.year_founded : null,
