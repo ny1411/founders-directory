@@ -1,6 +1,7 @@
 import { admissionResponse, type AdmissionCheck } from './admission-policy';
 import { MAX_RESUME_BYTES, RESUME_SIZE_ERROR, RESUME_TYPE_ERROR } from './resume-upload';
 import { parseResumeData } from './onboarding/resume';
+import { providerBudgetResponse } from './provider-budget';
 
 // Allow bounded multipart headers/fields in addition to the PDF itself.
 export const MAX_RESUME_REQUEST_BYTES = MAX_RESUME_BYTES + 64 * 1024;
@@ -102,7 +103,9 @@ export function createResumeExtractionHandler(deps: Dependencies) {
     try {
       const parsed = parseResumeData(JSON.parse(await deps.extract(pdf)));
       return Response.json({ resume: parsed }, { headers: { "Cache-Control": "private, no-store" } });
-    } catch {
+    } catch (error) {
+      const rejected = providerBudgetResponse(error);
+      if (rejected) return rejected;
       return failure('Unable to extract this resume. Your existing resume is unchanged. Try again later.', 502);
     }
   };

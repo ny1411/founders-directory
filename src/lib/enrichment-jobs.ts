@@ -6,6 +6,7 @@ import type { Company, Founder } from './types';
 import { saleshandyRequest } from './saleshandy';
 import { createEnrichmentProcessor } from './enrichment-worker';
 import { enrichmentEnabled, signEnrichmentMessage } from './enrichment-callback';
+import { withProviderBudget } from './provider-budget';
 
 const LIFETIME = 15 * 60 * 1000;
 const ref = (id: string) => adminDb.collection('contactEnrichmentJobs').doc(id);
@@ -71,9 +72,18 @@ export const processEnrichmentJob = createEnrichmentProcessor({
   enabled: enrichmentEnabled,
   get: async id => (await ref(id).get()).data() as EnrichmentJob | undefined || null,
   update: async (id, value) => { await ref(id).update(value); },
+  claimSubmission: (id, workerToken) => adminDb.runTransaction(async transaction => {
+    const jobRef = ref(id);
+    const workerLease = adminDb.collection('apiLeases').doc(hashIdentity(`enrichment-job:${id}`));
+    const [job, lease] = await transaction.getAll(jobRef, workerLease);
+    if (job.data()?.status !== 'queued' || lease.data()?.token !== workerToken || !(lease.data()?.expiresAt > Date.now() + 15_000)) return false;
+    transaction.update(jobRef, {status: 'submitting'});
+    return true;
+  }),
   targets,
   acquire: (key, ttlMs) => acquireLease(adminDb, key, ttlMs),
   release: (key, token) => releaseLease(adminDb, key, token),
   enqueue,
   provider: saleshandyRequest,
+  runPaid: (units, submit) => withProviderBudget(adminDb, 'enrichment', submit, units),
 });

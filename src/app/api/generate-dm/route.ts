@@ -11,6 +11,7 @@ import {
 } from "@/lib/rate-limit";
 import { createBotProtectedPost } from "@/lib/bot-verification";
 import { instrumentApiRoute } from "@/lib/observability-runtime";
+import { withProviderBudget } from "@/lib/provider-budget";
 
 export const runtime = "nodejs";
 const store = new OnboardingStore(adminDb);
@@ -89,7 +90,7 @@ const generateMessage = createMessageHandler({
   save: async (key, value) => {
     await adminDb.collection("generatedMessages").doc(key).set(value);
   },
-  generate: async ({ instructions, data }) =>
+  generate: ({ instructions, data }) => withProviderBudget(adminDb, "dm", async () =>
     (
       await new GoogleGenAI({
         apiKey: process.env.GEMINI_API_KEY,
@@ -98,10 +99,10 @@ const generateMessage = createMessageHandler({
         contents: JSON.stringify(data),
         config: {
           systemInstruction: instructions,
-          httpOptions: { timeout: 60_000 },
+          httpOptions: { timeout: 60_000, retryOptions: { attempts: 1 } },
         },
       })
-    ).text,
+    ).text),
 });
 
 const protectedPost = createBotProtectedPost({
