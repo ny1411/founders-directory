@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { projectId, teamSlug } from './firewall-rules.mjs';
+import { vercelInvocation } from './vercel-cli.mjs';
 
 // Eight sequential read-only requests maximum, never a production deployment.
 const deploymentId = process.argv[2];
@@ -7,7 +8,8 @@ const key = process.env.FIREWALL_PROBE_KEY;
 if (!/^dpl_[A-Za-z0-9]+$/.test(deploymentId ?? '') || !key || key.length < 32) {
   throw new Error('Pass a preview deployment ID and set FIREWALL_PROBE_KEY to the same 32+ character value used in the preview rule.');
 }
-const inspected = spawnSync('vercel', ['--non-interactive', '--scope', teamSlug, 'api', `/v13/deployments/${deploymentId}`, '--method', 'GET'], {
+const { command, prefix } = vercelInvocation();
+const inspected = spawnSync(command, [...prefix, '--non-interactive', '--scope', teamSlug, 'api', `/v13/deployments/${deploymentId}`, '--method', 'GET'], {
   encoding: 'utf8', timeout: 30_000, env: { ...process.env, VERCEL_TELEMETRY_DISABLED: '1' },
 });
 if (inspected.error) throw inspected.error;
@@ -20,11 +22,13 @@ if (deployment.id !== deploymentId || deployment.projectId !== projectId ||
   throw new Error('Deployment must be READY, belong to founders-directory, and have a non-production target; no traffic sent.');
 }
 const origin = `https://${deployment.url}`;
-const headers = { 'x-fd-firewall-probe': key };
-// Protection bypass is intentionally not accepted: use the protected-deployment
-// access workflow if this preview requires authentication.
+const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+const accessHeaders = bypass ? { 'x-vercel-protection-bypass': bypass } : {};
+const headers = { ...accessHeaders, 'x-fd-firewall-probe': key };
+// The optional Vercel bypass only reaches this verified Preview deployment.
+// Never print it or use it against Production. It does not bypass BotID.
 async function request(path, method = 'GET', marked = true) {
-  const response = await fetch(`${origin}${path}`, { method, headers: marked ? headers : {}, redirect: 'manual', signal: AbortSignal.timeout(10_000) });
+  const response = await fetch(`${origin}${path}`, { method, headers: marked ? headers : accessHeaders, redirect: 'manual', signal: AbortSignal.timeout(10_000) });
   await response.body?.cancel();
   console.log(`${method} ${path}: ${response.status}`);
   return response.status;
