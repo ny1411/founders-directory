@@ -29,3 +29,51 @@ Do not close #38 as operationally complete until the private rules, TTL policies
 
 Queue messages retain at most 15 minutes of retry history, matching the job's
 access lifetime. Delayed polling does not create indefinite poison-message retries.
+
+## Authenticated admission policies (#57)
+
+The following origin budgets are always wired through `src/lib/admission-policy.ts`.
+They use the same transactional `apiQuota` store and trusted IP derivation as paid
+API quotas; missing or failed admission dependencies fail closed. Authentication
+runs before UID admission, and admission runs before body parsing or business
+Firestore reads/writes. BotID remains an independent control where configured.
+
+| Operation | UID limits | IP limits |
+| --- | --- | --- |
+| Account sync | 10/minute | 30/minute |
+| Profile/onboarding GET | 60/minute shared | 180/minute shared |
+| Profile/onboarding writes | 40/minute, 600/hour, 2,000/day shared | 120/minute shared |
+| Company submission attempts | 3/hour, 10/day | 10/hour, 30/day |
+| Resume upload admission | 5/minute, 30/day | 15/minute, 90/day |
+
+`GET /api/profile` and `GET /api/onboarding` use one read scope. Profile POST/PATCH
+and every onboarding POST use one write scope: intent selection, answers, summary,
+steps, completion, and resume load/save cannot evade the write budget by using an
+alias. `load_resume` additionally consumes the shared read budget before loading
+profile/source data. Write rates allow the 1.8-second autosave cadence and brief
+interaction/retry bursts, while hourly/daily caps bound sustained automation.
+These are starting application policies; review legitimate traffic before tuning.
+
+Resume admission occurs before `authorizeUpload` loads/migrates a profile and
+before reading multipart bytes. It is separate from the existing five model
+attempts per ten minutes, which is still reserved only after PDF validation.
+Invalid/retried authenticated requests consume admission allowance; denied
+reservations do not increment any subject's quota. Company limits count submission
+attempts including invalid/duplicate-slug attempts; this bounds validation and cache
+invalidation attempts without storing untrusted business data.
+
+Quota exhaustion returns private/no-store HTTP 429 with Retry-After; quota-storage
+failure returns private/no-store HTTP 503 with a safe retry message. Company
+creation is a Next.js Server Action, whose framework transport is not a normal API
+429 response: it returns the existing structured error result with `RATE_LIMITED`
+or `LIMIT_UNAVAILABLE` code and `retryAfterSeconds`, and the form displays the safe
+retry message while retaining input. It does not write or invalidate caches when
+admission fails.
+
+Production needs the same server-only `apiQuota` access and `deleteAfter` TTL
+prerequisites already tracked in #47. Origin limits do not prevent Function/Auth
+or quota-store costs, and anonymous/auth-failure traffic is not counted by these
+UID policies. Edge pre-authentication limits and actual Firewall enforcement remain
+#40/#47; outside Vercel all callers share the conservative `unavailable` IP bucket.
+Do not replace it with client-controlled forwarding headers. No deployment flag
+can silently disable these admission checks.

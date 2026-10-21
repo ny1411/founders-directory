@@ -1,5 +1,6 @@
 'use server'
 
+import { reserveAdmission } from "@/lib/admission-policy"
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
 import { DIRECTORY_CACHE_TAG } from "@/lib/directory-cache"
 import { verifyBotRequest } from "@/lib/bot-verification"
@@ -15,15 +16,27 @@ export async function createCompany(formData: FormData, idToken: string): Promis
     return { error: 'Please sign in before adding a company.' }
   }
 
+  let identity
   try {
     // Client-side redirects do not protect this independently callable action.
-    await adminAuth.verifyIdToken(idToken, true)
+    identity = await adminAuth.verifyIdToken(idToken, true)
   } catch {
     return { error: 'Your session could not be verified. Please sign in again.' }
   }
 
-  const botVerification = await verifyBotRequest(await headers(), '/company/new')
+  const requestHeaders = await headers()
+  const botVerification = await verifyBotRequest(requestHeaders, '/company/new')
   if (!botVerification.allowed) return { error: botVerification.message }
+
+  try {
+    const admission = await reserveAdmission(adminDb, 'company-submit', identity.uid, requestHeaders)
+    if (!admission.allowed) return {
+      error: `Company submission limit reached. Try again in ${admission.retryAfterSeconds} seconds.`,
+      code: 'RATE_LIMITED', retryAfterSeconds: admission.retryAfterSeconds,
+    }
+  } catch {
+    return { error: 'Company submission limits are temporarily unavailable. Try again later.', code: 'LIMIT_UNAVAILABLE', retryAfterSeconds: 30 }
+  }
 
   const validated = validateCompanySubmission(formData)
   if (!validated.data) return { error: 'Check the highlighted fields and try again.', fieldErrors: validated.fieldErrors }

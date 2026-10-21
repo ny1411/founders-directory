@@ -7,7 +7,7 @@ export const hashIdentity = (value: string) => createHash('sha256').update(value
 
 // Vercel overwrites this header. Never trust client-supplied x-forwarded-for.
 // Outside Vercel share a conservative bucket unless an explicit trusted proxy is added.
-export function requestIp(request: Request) {
+export function requestIp(request: Pick<Request, 'headers'>) {
   const candidate = process.env.VERCEL ? request.headers.get('x-vercel-forwarded-for')?.split(',')[0].trim() : null;
   return candidate && isIP(candidate) ? candidate : 'unavailable';
 }

@@ -123,6 +123,7 @@ test(
         let result: Response;
         if (incoming.url === "/api/extract-resume") {
           result = await createResumeExtractionHandler({
+    admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
             verifyToken: async (token) => {
               assert.equal(token, uid);
               return { uid };

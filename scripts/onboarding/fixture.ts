@@ -138,7 +138,7 @@ export function fixture(uid = "test-user", memory = new MemoryFirestore()) {
   const handlers = createOnboardingHandler(async (token, revoked) => {
     if (token !== uid || !revoked) throw new Error("Rejected test identity");
     return { uid } as DecodedIdToken;
-  }, store);
+  }, store, { read: async () => ({ allowed: true, retryAfterSeconds: 1 }), write: async () => ({ allowed: true, retryAfterSeconds: 1 }) });
   return {
     uid,
     memory,
