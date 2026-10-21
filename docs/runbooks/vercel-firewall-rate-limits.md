@@ -12,6 +12,13 @@ diff` then reported no pending changes. No Preview rate-limit rule or 429 test
 has been published. Inspect the current configuration before taking action,
 because the owner may change it.
 
+Read-only recheck on **October 21, 2026** confirmed only `FD #35 observe
+homepage` active at 100 requests / 600 seconds with exceeded action `log`.
+There is no active API rate-limit enforcement. Both BotID flags remain
+explicitly `false` in Preview and Production; #47 retains the verified-human
+rollout and later removal of the temporary gates. #59 extends repository
+coverage and diagnostics only; no Firewall or environment setting was changed.
+
 **Plan blocker:** do not rerun `--stage`, add the Preview probe rule, switch the
 homepage rule to `rate_limit`, or expect an edge 429 until Vercel confirms this
 project can create and edit rate-limit rules. The already published log-only
@@ -30,16 +37,19 @@ All entries use a 600-second fixed window, counting by IP, scoped to Production.
 | Request | Requests / 10 minutes | Candidate enforcement after review |
 | --- | ---: | --- |
 | `GET /` (exact) | 100 | 429; challenge repeated automation |
-| `GET /company/*` | 120 | Challenge after crawler/link-preview review |
+| `GET` or `HEAD /company/*` | 120 | Challenge after crawler/link-preview review |
 | `POST /api/enrich-contact` | 10 | 429 |
-| `GET /api/enrich-contact/*` job status | 120 | 429 |
+| `GET` or `HEAD /api/enrich-contact/*` job status | 120 | 429 |
 | `POST /api/generate-dm` | 20 | 429 |
 | `POST /api/extract-resume` | 10 | 429 |
 | `POST /api/onboarding` | 120 | 429 after autosave review |
+| `GET` or `HEAD /api/onboarding` | 120 | 429 |
 | `POST /api/auth/sync` | 30 | 429 |
-| `GET /api/profile` | 120 | 429 |
+| `GET` or `HEAD /api/profile` | 120 | 429 |
 | `PATCH` or `POST /api/profile` (shared budget) | 30 | 429 |
-| `GET /api/directory` | 60 | 429 |
+| `GET` or `HEAD /api/directory` | 60 | 429 |
+| `GET` or `HEAD /_next/image` (exact) | 300 | 429 after image/navigation review |
+| `POST /*` with Server Action metadata or `Next-Action` header | 30 | 429 after company submission review |
 
 `scripts/security/firewall-rules.mjs` is the source of truth. The homepage rule is named `FD #35 observe homepage`; the other rules retain `FD #40` names. The directory endpoint introduced in #36 has its own bucket. Queue callbacks and static assets are excluded. Do not add a broad `/api/*` quota, spoofable user-agent whitelist, Android/Chrome Mobile deny, or shared-JA4 deny. Authentication, durable per-user quotas, deduplication, and provider budgets from #38 remain necessary against distributed traffic. See [traffic-abuse.md](traffic-abuse.md) for the incident response checklist.
 
@@ -47,6 +57,31 @@ If the older `FD #40 observe homepage` rule was previously staged or published,
 the staging script stops. Inspect its existing action and conditions, then
 deliberately migrate or remove it through a reviewed draft before staging
 `FD #35 observe homepage`; two overlapping homepage limits would be confusing.
+
+The API matrix includes Next's implicit HEAD handler for every exported GET.
+The existing homepage rule remains GET-only to preserve its published shape.
+The image threshold is a generous observation starting point, not a validated
+safe value; image-source restrictions remain the separate P2 #69 work.
+
+Server Action OR groups each include Production, POST, and path-prefix `/`.
+The native `server_action` existence condition covers Vercel-classified actions
+such as progressive multipart forms; a separate `Next-Action` header existence
+condition covers the installed Next 15 imported-action transport. Next posts
+to the current canonical URL, so restricting only to `/company/new` would leave
+replays at other URLs outside this observation bucket. Ordinary POST requests
+without action metadata do not match. Spoofed metadata can consume this IP
+bucket but never bypass origin authentication, BotID, authorization or quotas.
+The sole legitimate company-action UI is `/company/new`, which is included in
+the browser challenge policy. Signed `/api/queues/enrich-contact` callbacks
+are intentionally outside browser BotID and this IP quota, retaining signed
+envelope verification and durable worker limits.
+
+`firewall-rules.test.mjs` discovers actual route exports and checks every API
+method and implicit HEAD against this matrix, with that signed Queue exclusion.
+It also verifies both action OR groups survive CLI serialization and that the
+current Next transport uses the canonical URL. These are local coverage tests;
+live `server_action` classification, entitlement, draft validation, traffic,
+edge 429 evidence and false-positive review still belong to #40.
 
 ## Stage and inspect
 

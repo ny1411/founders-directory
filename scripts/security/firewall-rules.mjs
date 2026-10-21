@@ -5,16 +5,19 @@ export const teamSlug = 'ny1411';
 // #35 homepage and #40 API starting points, not measured safe enforcement thresholds.
 const definitions = [
   ['homepage', ['GET'], '/', 'eq', 100],
-  ['company', ['GET'], '/company/', 'pre', 120],
+  ['company', ['GET', 'HEAD'], '/company/', 'pre', 120],
   ['enrichment', ['POST'], '/api/enrich-contact', 'eq', 10],
-  ['enrichment-status', ['GET'], '/api/enrich-contact/', 'pre', 120],
+  ['enrichment-status', ['GET', 'HEAD'], '/api/enrich-contact/', 'pre', 120],
   ['dm', ['POST'], '/api/generate-dm', 'eq', 20],
   ['resume', ['POST'], '/api/extract-resume', 'eq', 10],
   ['onboarding', ['POST'], '/api/onboarding', 'eq', 120],
+  ['onboarding-read', ['GET', 'HEAD'], '/api/onboarding', 'eq', 120],
   ['auth-sync', ['POST'], '/api/auth/sync', 'eq', 30],
-  ['profile-read', ['GET'], '/api/profile', 'eq', 120],
+  ['profile-read', ['GET', 'HEAD'], '/api/profile', 'eq', 120],
   ['profile-write', ['PATCH', 'POST'], '/api/profile', 'eq', 30],
-  ['directory', ['GET'], '/api/directory', 'eq', 60],
+  ['directory', ['GET', 'HEAD'], '/api/directory', 'eq', 60],
+  ['image-optimizer', ['GET', 'HEAD'], '/_next/image', 'eq', 300],
+  ['server-actions', ['POST'], '/', 'pre', 30],
 ];
 
 export function observationRules() {
@@ -22,11 +25,15 @@ export function observationRules() {
     name: `FD #${key === 'homepage' ? '35' : '40'} observe ${key}`,
     active: true,
     description: `Issue #${key === 'homepage' ? '35' : '40'}: production observation only; review traffic before preview enforcement.`,
-    conditionGroup: [{ conditions: [
+    conditionGroup: (key === 'server-actions' ? [
+      { type: 'server_action', op: 'ex' },
+      { type: 'header', key: 'next-action', op: 'ex' },
+    ] : [null]).map(extra => ({ conditions: [
       { type: 'environment', op: 'eq', value: 'production' },
       { type: 'method', op: methods.length === 1 ? 'eq' : 'inc', value: methods.length === 1 ? methods[0] : methods },
       { type: 'path', op, value: path },
-    ] }],
+      ...(extra ? [extra] : []),
+    ] })),
     action: { mitigate: { action: 'rate_limit', rateLimit: {
       algo: 'fixed_window', window: 600, limit, keys: ['ip'], action: 'log',
     } } },
@@ -70,7 +77,10 @@ export function addRuleArgs(rule) {
   const rate = rule.action.mitigate.rateLimit;
   return ['--non-interactive', '--scope', teamSlug, 'firewall', 'rules', 'add', rule.name,
     '--project', projectId,
-    ...rule.conditionGroup[0].conditions.flatMap(condition => ['--condition', JSON.stringify(condition)]),
+    ...rule.conditionGroup.flatMap((group, index) => [
+      ...(index ? ['--or'] : []),
+      ...group.conditions.flatMap(condition => ['--condition', JSON.stringify(condition)]),
+    ]),
     '--description', rule.description, '--action', 'rate_limit',
     '--rate-limit-window', String(rate.window), '--rate-limit-requests', String(rate.limit),
     '--rate-limit-keys', 'ip', '--rate-limit-action', 'log', '--yes'];
