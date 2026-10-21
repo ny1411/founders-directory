@@ -8,6 +8,7 @@ import { reserveResumeExtractionAttempt, RESUME_USAGE_WINDOW_MS } from '../../sr
 function setup(options: { invalidToken?: boolean; limited?: boolean; usageDown?: boolean; modelFailure?: boolean } = {}) {
   const events: string[] = [];
   const handler = createResumeExtractionHandler({
+    admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
     verifyToken: async (token) => {
       events.push(`verify:${token}`);
       if (options.invalidToken) throw new Error('sensitive credential details');
@@ -68,6 +69,7 @@ test('successful extraction returns a private draft without persistence', async 
 test('malformed or empty model extractions are never returned as usable resumes', async () => {
   for (const value of [{}, { name: 'Ada', skills: 42 }, { name: 'Ada', projects: 'wrong shape' }]) {
     const handler = createResumeExtractionHandler({
+    admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
       verifyToken: async () => ({ uid: 'verified-user' }),
       reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
       extract: async () => JSON.stringify(value),
@@ -79,6 +81,7 @@ test('malformed or empty model extractions are never returned as usable resumes'
 test('non-job profiles are rejected before the upload body or paid model is read', async () => {
   let modelCalls = 0;
   const handler = createResumeExtractionHandler({
+    admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
     verifyToken: async () => ({ uid: 'verified-user' }),
     authorizeUpload: async () => false,
     reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),

@@ -31,7 +31,7 @@ function fixture(options: { code?: string; databaseFailure?: boolean; email?: st
       };
     },
   } as unknown as Pick<Firestore, 'collection'>;
-  return { calls, POST: createAuthSyncHandler(auth, db) };
+  return { calls, POST: createAuthSyncHandler(auth, db, async () => ({ allowed: true, retryAfterSeconds: 1 })) };
 }
 
 function request(authorization?: string, body?: string) {

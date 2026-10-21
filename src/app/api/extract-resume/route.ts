@@ -1,3 +1,4 @@
+import { createAdmissionCheck } from '@/lib/admission-policy';
 import { GoogleGenAI } from '@google/genai';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { createResumeExtractionHandler } from '@/lib/resume-extraction-handler';
@@ -10,6 +11,7 @@ export const runtime = 'nodejs';
 const onboardingStore = new OnboardingStore(adminDb);
 
 const extractResume = createResumeExtractionHandler({
+  admit: createAdmissionCheck(adminDb, 'resume-upload'),
   verifyToken: (token) => adminAuth.verifyIdToken(token, true),
   authorizeUpload: async (uid) => (await onboardingStore.load(uid)).goal?.type === 'job',
   reserveAttempt: (uid) => reserveResumeExtractionAttempt(adminDb, uid),
