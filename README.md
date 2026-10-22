@@ -36,6 +36,12 @@ Founders Directory is a premium, developer-focused platform designed to help you
 
 You need Node.js installed on your machine.
 
+`package.json` overrides `jose` to 5.10.0 only for `jwks-rsa`. The JWKS client
+loads it with CommonJS `require()`, which fails with ESM-only `jose` 6 in the
+deployed server runtime. Keep this override until that loading path is compatible;
+`scripts/security/firebase-admin-compat.test.ts` checks auth loading and RSA key
+retrieval with Node's `require(ESM)` support disabled.
+
 ### Installation
 
 1. Clone the repository and install dependencies:

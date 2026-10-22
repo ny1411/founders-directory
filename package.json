@@ -54,6 +54,9 @@
     "@eslint/eslintrc": "^3.3.5"
   },
   "overrides": {
+    "jwks-rsa": {
+      "jose": "5.10.0"
+    },
     "next": {
       "postcss": "^8.5.23"
     },
