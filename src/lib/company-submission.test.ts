@@ -66,7 +66,7 @@ test('required text, lengths, slug, years, URLs, email and founder bounds are va
     const data = form(); data.set(key, 'Founder')
     assert.ok(validateCompanySubmission(data).fieldErrors?.founders)
   }
-  const valid = form(); valid.set('website', 'https://example.com/a?q=b'); valid.set('logoUrl', 'http://example.com/logo.png')
+  const valid = form(); valid.set('website', 'https://example.com/a?q=b'); valid.set('logoUrl', 'https://bookface-images.s3.amazonaws.com/small_logos/logo.png')
   assert.ok(validateCompanySubmission(valid).data)
 })
 

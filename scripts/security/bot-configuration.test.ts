@@ -4,6 +4,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import * as policy from '../../src/lib/bot-policy';
+import * as imagePolicy from '../../src/lib/image-policy';
 import { createBotProtectedPost } from '../../src/lib/bot-verification';
 
 test('all four explicit BotID flag combinations and unset rollout defaults are diagnosed', () => {
@@ -40,11 +41,18 @@ test('the real Next startup configuration rejects a partial rollout before expor
       require(name: string) {
         if (name === 'botid/next/config') return { withBotId: (config: unknown) => config };
         if (name === './src/lib/bot-policy') return { diagnoseBotIdConfiguration: (a: string, b: string) => policy.diagnoseBotIdConfiguration(a, b, () => {}) };
+        if (name === './src/lib/image-policy') return imagePolicy;
         throw new Error(`Unexpected import: ${name}`);
       },
     });
     if (invalid) { assert.throws(run, /Invalid BotID configuration/); assert.equal(exports.default, undefined); }
-    else { run(); assert.ok(exports.default); }
+    else {
+      run();
+      const config = exports.default as { images: unknown; experimental: unknown };
+      assert.ok(config);
+      assert.equal(config.images, imagePolicy.IMAGE_CONFIG);
+      assert.equal(config.experimental, imagePolicy.IMAGE_DECODER_CONFIG);
+    }
   }
 });
 
