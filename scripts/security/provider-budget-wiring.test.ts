@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
 import ts from 'typescript';
-import {providerBudgetConfig, withProviderBudget, type PaidOperation} from '../../src/lib/provider-budget';
+import {providerBudgetConfig, withProviderBudget, type PaidOperation, ProviderBudgetError} from '../../src/lib/provider-budget';
 import {createEnrichmentProcessor} from '../../src/lib/enrichment-worker';
 import type {EnrichmentJob} from '../../src/lib/enrichment-handler';
 import type {Company, Founder} from '../../src/lib/types';
@@ -20,14 +20,15 @@ function load(relative: string, imports: Record<string, unknown>) {
 test('both production Gemini routes reserve before SDK submission with a single bounded SDK attempt', async () => {
   for (const operation of ['dm', 'resume'] as const) {
     const f = memoryBudgetDb(); let captured: Record<string, (...args: unknown[]) => Promise<unknown>> | undefined;
-    let calls = 0; let killed = false;
+    let calls = 0; let killed = false; let delayedBudget = false; let ownerExpired = false;
     const wrap = (db: typeof f.db, actual: PaidOperation, work: () => Promise<unknown>, units?: number) => {
       assert.equal(db, f.db); assert.equal(actual, operation);
-      return withProviderBudget(db, actual, work, units, {config: () => ({...providerBudgetConfig({}), enabled: !killed})});
+      return withProviderBudget(db, actual, async () => {if (delayedBudget) ownerExpired = true; return work();}, units, {config: () => ({...providerBudgetConfig({}), enabled: !killed})});
     };
     class GoogleGenAI {
-      models = {generateContent: async (input: {config: {httpOptions: object}}) => {
+      models = {generateContent: async (input: {config: {httpOptions: object; maxOutputTokens: number}}) => {
         calls++; assert.equal(f.units().length, 4);
+        assert.equal(input.config.maxOutputTokens, operation === 'resume' ? 8192 : 1024);
         assert.ok(f.units().every(units => units === (operation === 'resume' ? 5 : 1)), 'reservation precedes paid SDK call');
         assert.equal(input.config.httpOptions && JSON.stringify(input.config.httpOptions), JSON.stringify({timeout: 60000, retryOptions: {attempts: 1}}));
         return {text: 'safe model result'};
@@ -43,13 +44,26 @@ test('both production Gemini routes reserve before SDK submission with a single 
       ...(operation === 'dm' ? {
         '@/lib/onboarding/messages': {createMessageHandler: capture}, '@/lib/rate-limit': {},
       } : {
-        '@/lib/resume-extraction-handler': {createResumeExtractionHandler: capture},
+        '@/lib/resume-extraction-handler': {createResumeExtractionHandler: capture, RESUME_EXTRACTION_LEASE_MS: 120000},
+        '@/lib/rate-limit': {
+          acquireLease: async (db: unknown, key: string, ttl: number) => {assert.equal(db, f.db); assert.equal(key, 'resume-extraction:verified-owner'); assert.equal(ttl,120000); return 'owner-token';},
+          releaseLease: async (db: unknown, key: string, token: string) => {assert.equal(db, f.db); assert.equal(key, 'resume-extraction:verified-owner'); assert.equal(token,'owner-token');},
+        },
         '@/lib/resume-extraction-usage': {}, '@/lib/admission-policy': {createAdmissionCheck: () => {}},
       }),
     });
-    const submit = () => operation === 'dm' ? captured!.generate({instructions: 'safe', data: {}}) : captured!.extract(Buffer.from('%PDF-1.4'));
+    if (operation === 'resume') {
+      assert.equal(await captured!.acquire('verified-owner'), 'owner-token');
+      await captured!.release('verified-owner', 'owner-token');
+    }
+    const submit = () => operation === 'dm' ? captured!.generate({instructions: 'safe', data: {}}) : captured!.extract(Buffer.from('%PDF-1.4'), () => {if (ownerExpired) throw new ProviderBudgetError(503, 'concurrency', 30);});
     assert.equal(await submit(), 'safe model result'); assert.equal(calls, 1);
     killed = true; await assert.rejects(submit(), {status: 503}); assert.equal(calls, 1);
+    if (operation === 'resume') {
+      killed = false; delayedBudget = true;
+      await assert.rejects(submit(), {status:503});
+      assert.equal(ownerExpired, true); assert.equal(calls,1, 'expired owner lease must not start SDK after delayed global reservation');
+    }
   }
 });
 

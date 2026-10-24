@@ -1,0 +1,69 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - name: Install isolated browser
+        run: npx playwright install --with-deps chromium
+      - name: Type and lint checks
+        run: |
+          npx tsc --noEmit
+          npm run lint
+      - name: Security and private-data regression checks
+        run: |
+          npm run test:security
+          node --import tsx --test scripts/auth-sync.test.ts
+      - name: Onboarding, profile and directory checks
+        run: |
+          npm run test:onboarding
+          npm run test:onboarding:browser
+          npm run test:profile
+          npm run test:filters
+          npm run test:directory
+          npm run test:scraper
+      - name: Isolated Firestore authorization checks
+        run: node scripts/security/run-firestore-rules-tests.mjs
+      - name: Audit shipped dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan history with redacted findings
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: 'false'
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
+          GITLEAKS_ENABLE_SUMMARY: 'true'

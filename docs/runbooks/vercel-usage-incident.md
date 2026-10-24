@@ -214,3 +214,18 @@ Review this runbook whenever any linked implementation changes:
 - [#40 — Vercel edge Firewall rate limits](https://github.com/ny1411/founders-directory/issues/40)
 
 Issue #41 remains operationally incomplete until supported alerts and recipients are verified, deployed routes emit telemetry, saved views exist, a bounded Preview exercise succeeds, two operators complete the tabletop, and the 24-hour post-recovery watch is recorded.
+
+## Browser policy and audit follow-up (#64)
+
+The repository now supplies report-only CSP and baseline browser headers, a
+bounded privacy-safe CSP report receiver, and CI checks described in
+[Browser security](../security/browser-security.md). During rollout, verify actual
+Preview/Production headers and Google sign-in/BotID flows before considering CSP
+enforcement. Review `security.csp_report` only as an untrusted bounded diagnostic.
+Auth sync, onboarding/profile, founder-contact and company-submission outcomes
+now supplement existing generation/enrichment telemetry. No raw provider or
+Firebase exception is needed for these audits.
+
+Before declaring operational rollout complete, record branch protection required
+checks and bypass access, operator MFA status, backup operator, and the tested
+alert destination. CI and code changes do not enable these external settings.

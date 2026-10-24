@@ -57,10 +57,40 @@ export function instrumentApiRoute<Context>(
         });
       }
       timer.finish({outcome, fields: {status_code: response.status}});
+      // These routes carry identity/private data even on errors and quota/bot denials.
+      if (config.route.startsWith('/api/') && config.route !== '/api/directory') {
+        response.headers.set('Cache-Control', 'private, no-store');
+      }
       return response;
     } catch (error) {
       timer.finish({outcome: 'error', fields: {error_code: 'internal_error'}});
       throw error;
     }
   };
+}
+
+/** Factory handlers also retain the privacy contract outside framework route wiring. */
+export function privateResponse(response: Response): Response {
+  response.headers.set('Cache-Control', 'private, no-store');
+  return response;
+}
+
+export function instrumentPrivateHandler(config: RouteConfig, handler: (request: Request) => Promise<Response>) {
+  const wrapped = instrumentApiRoute(config, handler);
+  return (request: Request) => wrapped(request, undefined);
+}
+
+/** Redirects are Next control flow, and are successful only with the known redirect digest. */
+export async function instrumentCompanySubmission<T extends { error?: string; code?: string }>(handler: () => Promise<T>): Promise<T> {
+  const timer = observability.startTimer({metric: 'company.submit.duration_ms', event: 'company.submit', route: '/company/new'});
+  try {
+    const result = await handler();
+    const outcome: Outcome = result.code === 'RATE_LIMITED' ? 'rate_limited' : (result.code === 'LIMIT_UNAVAILABLE' || result.code === 'SAVE_FAILED') ? 'error' : result.error ? 'rejected' : 'success';
+    timer.finish({outcome});
+    return result;
+  } catch (error) {
+    const redirect = error !== null && typeof error === 'object' && 'digest' in error && typeof error.digest === 'string' && /^NEXT_REDIRECT;/.test(error.digest);
+    timer.finish({outcome: redirect ? 'success' : 'error'});
+    throw error;
+  }
 }

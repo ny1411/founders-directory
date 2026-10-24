@@ -14,10 +14,9 @@ interface SendDmButtonProps {
   companySlug: string;
   twitterUrl?: string | null;
   linkedinUrl?: string | null;
-  email?: string | null;
 }
 
-export function SendDmButton({ founderId, founderName, companySlug, twitterUrl, linkedinUrl, email }: SendDmButtonProps) {
+export function SendDmButton({ founderId, founderName, companySlug, twitterUrl, linkedinUrl }: SendDmButtonProps) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -60,14 +59,14 @@ export function SendDmButton({ founderId, founderName, companySlug, twitterUrl, 
         Send Custom Text
       </button>
 
-      {isModalOpen && (
+      {isModalOpen && user && (
         <ColdDmModal 
+          key={`${user.uid}:${founderId}`}
           founderId={founderId} 
           founderName={founderName} 
           companySlug={companySlug} 
           twitterUrl={twitterUrl}
           linkedinUrl={linkedinUrl}
-          email={email}
           onClose={() => setIsModalOpen(false)} 
         />
       )}

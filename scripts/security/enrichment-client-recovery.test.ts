@@ -24,6 +24,7 @@ function fixture(status: number, payload: object, networkError = false) {
     navigator: {clipboard: {writeText: async () => {}}},
     setTimeout: (fn: () => void) => {queueMicrotask(fn); return 1;}, clearTimeout() {},
     async fetch(_url: string, init: RequestInit) {
+      if (_url === '/api/founder-contact') return Response.json({email: null});
       if (init.method === 'POST') {
         keys.push((init.headers as Record<string, string>)['Idempotency-Key']);
         return Response.json({statusUrl: '/api/enrich-contact/job'}, {status: 202});
@@ -37,7 +38,7 @@ function fixture(status: number, payload: object, networkError = false) {
         useState: (value: unknown) => {const i = stateIndex++; return [i === 0 ? false : i === 3 ? 'A message' : value, (next: unknown) => {if(i === 7) errors.push(next);}];},
         useRef: (value: unknown) => ({current: value}), useEffect() {},
       };
-      if (name === '@/context/AuthContext') return {useAuth: () => ({user: {getIdToken: async () => 'fresh-token'}})};
+      if (name === '@/context/AuthContext') return {useAuth: () => ({user: {uid: 'owner', getIdToken: async () => 'fresh-token'}})};
       if (name === 'next/navigation') return {useRouter: () => ({push() {}})};
       if (name === '@/components/ui/button') return {buttonVariants: () => ''};
       if (name === 'lucide-react') return {X: 'i', Copy: 'i', ExternalLink: 'i', Loader2: 'i'};

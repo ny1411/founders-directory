@@ -1,3 +1,4 @@
+import { instrumentPrivateHandler } from "../observability-runtime";
 import { admissionResponse, type AdmissionCheck } from "../admission-policy";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import { OnboardingConflictError, OnboardingValidationError } from "./errors";
@@ -147,6 +148,7 @@ export function createOnboardingHandler(
   verifyToken: VerifyToken,
   store: Store,
   admission: { read: AdmissionCheck; write: AdmissionCheck },
+  route: "/api/onboarding" | "/api/profile" = "/api/onboarding",
 ) {
   async function handle(request: Request, profileOnly = false) {
     try {
@@ -264,14 +266,14 @@ export function createOnboardingHandler(
         },
         { status: 400, headers: { "Cache-Control": "private, no-store" } },
       );
-    console.error("Unable to process onboarding:", error);
+    console.error("Unable to process onboarding");
     return Response.json(
       { error: "Unable to process your profile. Try again later." },
       { status: 500, headers: { "Cache-Control": "private, no-store" } },
     );
   }
 
-  return {
+  const handlers = {
     GET: async (request: Request) => {
       try {
         const identity = await authenticate(request, verifyToken);
@@ -285,4 +287,10 @@ export function createOnboardingHandler(
     POST: (request: Request) => handle(request),
     PATCH: (request: Request) => handle(request, true),
   };
+  const wrap = (handler: (request: Request) => Promise<Response>) => instrumentPrivateHandler({
+    route, event: route === '/api/profile' ? 'profile' : 'onboarding.save', durationMetric: route === '/api/profile' ? 'profile.duration_ms' : 'onboarding.save.duration_ms', provider: 'firestore',
+  }, handler);
+  return {GET: instrumentPrivateHandler({route, event: 'profile', durationMetric: 'profile.duration_ms', provider: 'firestore'}, handlers.GET), POST: wrap(handlers.POST), PATCH: instrumentPrivateHandler({
+    route: '/api/profile', event: 'profile', durationMetric: 'profile.duration_ms', provider: 'firestore',
+  }, handlers.PATCH)};
 }

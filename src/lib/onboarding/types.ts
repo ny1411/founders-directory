@@ -79,6 +79,9 @@ export interface OnboardingState {
 }
 
 export interface ProfileSource {
+  /** null keeps the active source; Firestore stores Date values as TTL timestamps. */
+  deleteAfter?: Date | null;
+  supersededAt?: string;
   type: "resume_pdf" | "legacy_resume" | "resume_edit";
   status: "ready" | "failed";
   extractedData: Record<string, unknown>;

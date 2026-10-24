@@ -1,17 +1,21 @@
 import { admissionResponse, type AdmissionCheck } from './admission-policy';
 import { MAX_RESUME_BYTES, RESUME_SIZE_ERROR, RESUME_TYPE_ERROR } from './resume-upload';
 import { parseResumeData } from './onboarding/resume';
-import { providerBudgetResponse } from './provider-budget';
+import { ProviderBudgetError, providerBudgetResponse } from './provider-budget';
 
 // Allow bounded multipart headers/fields in addition to the PDF itself.
 export const MAX_RESUME_REQUEST_BYTES = MAX_RESUME_BYTES + 64 * 1024;
+export const MAX_RESUME_OUTPUT_BYTES = 256 * 1024;
+export const RESUME_EXTRACTION_LEASE_MS = 120_000;
 
 interface Dependencies {
   admit: AdmissionCheck;
   verifyToken: (token: string) => Promise<{ uid: string }>;
   authorizeUpload?: (uid: string) => Promise<boolean>;
   reserveAttempt: (uid: string) => Promise<{ allowed: boolean; retryAfterSeconds: number }>;
-  extract: (pdf: Buffer) => Promise<string>;
+  extract: (pdf: Buffer, assertOwnerFresh: () => void) => Promise<string>;
+  acquire: (uid: string) => Promise<string | null>;
+  release: (uid: string, token: string) => Promise<void>;
 }
 
 function failure(error: string, status: number, headers?: HeadersInit) {
@@ -88,25 +92,47 @@ export function createResumeExtractionHandler(deps: Dependencies) {
     const pdf = Buffer.from(await file.arrayBuffer());
     if (!pdf.subarray(0, 5).equals(Buffer.from('%PDF-'))) return failure(RESUME_TYPE_ERROR, 415);
 
-    try {
-      const allowance = await deps.reserveAttempt(uid);
-      if (!allowance.allowed) {
-        return failure('Resume upload limit reached (5 attempts per 10 minutes). Try again later.', 429, {
-          'Retry-After': String(allowance.retryAfterSeconds),
-        });
-      }
-    } catch {
-      // Fail closed: never incur model charges if usage protection is unavailable.
-      return failure('Resume uploads are temporarily unavailable. Try again later.', 503);
-    }
+    const leaseStartedAt = Date.now();
+    let lease: string | null;
+    try { lease = await deps.acquire(uid); }
+    catch { return failure('Resume uploads are temporarily unavailable. Try again later.', 503); }
+    if (!lease) return failure('A resume extraction is already running. Try again shortly.', 429, { 'Retry-After': '120' });
 
     try {
-      const parsed = parseResumeData(JSON.parse(await deps.extract(pdf)));
-      return Response.json({ resume: parsed }, { headers: { "Cache-Control": "private, no-store" } });
-    } catch (error) {
-      const rejected = providerBudgetResponse(error);
-      if (rejected) return rejected;
-      return failure('Unable to extract this resume. Your existing resume is unchanged. Try again later.', 502);
+      try {
+        const allowance = await deps.reserveAttempt(uid);
+        if (!allowance.allowed) {
+          return failure('Resume upload limit reached (5 attempts per 10 minutes). Try again later.', 429, {
+            'Retry-After': String(allowance.retryAfterSeconds),
+          });
+        }
+      } catch {
+        // Fail closed: never incur model charges if usage protection is unavailable.
+        return failure('Resume uploads are temporarily unavailable. Try again later.', 503);
+      }
+
+      try {
+        // Storage latency must not leave less than a full SDK timeout in the lease.
+        const assertOwnerFresh = () => {
+          if (Date.now() + 60_000 >= leaseStartedAt + RESUME_EXTRACTION_LEASE_MS) {
+            throw new ProviderBudgetError(503, 'concurrency', 30);
+          }
+        };
+        assertOwnerFresh();
+        const output = await deps.extract(pdf, assertOwnerFresh);
+        if (Buffer.byteLength(output) > MAX_RESUME_OUTPUT_BYTES) throw new Error('Extraction output exceeds limit');
+        const parsed = parseResumeData(JSON.parse(output));
+        return Response.json({ resume: parsed }, { headers: { "Cache-Control": "private, no-store" } });
+      } catch (error) {
+        const rejected = providerBudgetResponse(error);
+        if (rejected) return rejected;
+        return failure('Unable to extract this resume. Your existing resume is unchanged. Try again later.', 502);
+      }
+    } finally {
+      // A failed release cannot expose provider/storage details. The fenced lease
+      // expires after 120 seconds, longer than the single 60-second SDK attempt.
+      try { await deps.release(uid, lease); }
+      catch { console.warn(JSON.stringify({ event: 'resume_lease', outcome: 'release_failed' })); }
     }
   };
 }
