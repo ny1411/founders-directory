@@ -1,6 +1,6 @@
 import { Directory } from "@/components/directory"
 import { JsonLd } from "@/components/json-ld"
-import { buildInitialDirectoryData, getDirectorySnapshot } from "@/lib/directory-query"
+import { buildInitialDirectoryData, getDirectoryIndex } from "@/lib/directory-query"
 import { Suspense } from "react"
 
 export const dynamic = "force-static"
@@ -35,8 +35,8 @@ const jsonLd = {
 }
 
 export default async function Home() {
-  const snapshot = await getDirectorySnapshot()
-  const initialData = buildInitialDirectoryData(snapshot)
+  const index = await getDirectoryIndex()
+  const initialData = await buildInitialDirectoryData(index)
 
   return (
     <div className="flex flex-col gap-16 pb-16">

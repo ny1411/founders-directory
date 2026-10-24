@@ -68,7 +68,7 @@ export function matchesCompanySearch(company: Pick<DirectoryCompany, "name" | "s
     normalizeCompanySearch(company.slug ?? "").startsWith(query)
 }
 
-export function matchesDirectoryFilters(company: DirectoryCompany, filters: DirectoryFilters): boolean {
+export function matchesDirectoryFilters(company: Pick<DirectoryCompany, "name" | "slug" | "industry" | "tags" | "employees" | "batch" | "vcBacker">, filters: DirectoryFilters): boolean {
   return matchesCompanySearch(company, filters.q) &&
     (!filters.industry.length || filters.industry.some(value => matchesIndustry(company, value))) &&
     (!filters.employees.length || filters.employees.some(value => matchesEmployeeRange(company.employees, value))) &&

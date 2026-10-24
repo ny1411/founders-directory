@@ -86,9 +86,10 @@ function database(initial: Array<[string, Record<string, unknown>]> = []) {
         const transaction = {
           async get(ref: { path?: string; slug?: string }) {
             assert.equal(pending.size, 0, 'all reads precede writes')
-            if (ref.path) return { exists: documents.has(ref.path) }
+            if (ref.path) return { exists: documents.has(ref.path), data: () => documents.get(ref.path!) }
             return { empty: ![...documents].some(([path, value]) => path.startsWith('companies/') && value.slug === ref.slug) }
           },
+          set(ref: { path: string }, value: Record<string, unknown>) { pending.set(ref.path, value) },
           create(ref: { path: string }, value: Record<string, unknown>) {
             assert.ok(!documents.has(ref.path))
             pending.set(ref.path, value)
@@ -110,7 +111,7 @@ test('concurrent submissions save one company and founder set, including stage',
   const parsed = validateCompanySubmission(data).data!
   const { db, documents } = database()
   assert.deepEqual(await Promise.all([storeCompanySubmission(db, parsed), storeCompanySubmission(db, parsed)]), [true, false])
-  assert.equal(documents.size, 2)
+  assert.equal(documents.size, 3)
   assert.equal(documents.get('companies/acme')?.stage, 'Seed')
   assert.equal(documents.get('founders/acme-0')?.companyId, 'acme')
 })

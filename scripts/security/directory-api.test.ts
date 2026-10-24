@@ -33,7 +33,7 @@ function fixture(options: { denied?: boolean; failQuota?: boolean; failSnapshot?
         instrumentApiRoute: (_config: unknown, handler: (request: Request) => Promise<Response>) => handler,
       };
       if (name === '@/lib/directory-query') return {
-        getDirectorySnapshot: async () => {
+        getDirectoryIndex: async () => {
           operations.push('snapshot');
           if (options.failSnapshot) throw new Error('private snapshot details');
           return { companies: [] };

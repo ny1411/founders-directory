@@ -26,7 +26,13 @@ test("rejects unknown and unbounded inputs before directory work", () => {
     `?${Array.from({ length: 11 }, () => "industry=B2B").join("&")}`,
     `?${Array.from({ length: 11 }, (_, i) => `vc=VC${i}`).join("&")}`,
     `?${Array.from({ length: 10 }, (_, i) => `vc=VC${i}`).join("&")}&${Array.from({ length: 10 }, (_, i) => `batch=B${i}`).join("&")}&industry=B2B`,
-    "?page=501", "?page=999999999999", "?page=0", "?page=01", "?q=x&q=y", "?industry=", "?sort=bad",
+    "?page=100001", "?page=999999999999", "?page=0", "?page=01", "?q=x&q=y", "?industry=", "?sort=bad",
   ]
   for (const search of bad) assert.equal(parseDirectoryRequest(search).ok, false, search)
+})
+
+
+test("page URLs can grow beyond the old 5,000-company snapshot cap", () => {
+  assert.equal(parseDirectoryRequest("?page=501").ok, true)
+  assert.equal(parseDirectoryRequest("?page=100000").ok, true)
 })

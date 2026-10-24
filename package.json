@@ -14,7 +14,9 @@
     "test:onboarding:browser": "tsx --test scripts/onboarding/*.browser.test.ts",
     "test:filters:e2e": "tsx --test scripts/directory/filters.e2e.test.ts",
     "test:profile": "tsx --test scripts/profile-loading.test.tsx",
-    "test:security": "tsx --test scripts/security/*.test.ts src/lib/enrichment-*.test.ts src/lib/observability.test.ts src/lib/rate-limit.test.ts src/lib/onboarding/messages.test.ts && node --test scripts/security/firewall-rules.test.mjs scripts/security/vercel-cli.test.mjs"
+    "test:security": "tsx --test scripts/security/*.test.ts src/lib/enrichment-*.test.ts src/lib/observability.test.ts src/lib/rate-limit.test.ts src/lib/onboarding/messages.test.ts && node --test scripts/security/firewall-rules.test.mjs scripts/security/vercel-cli.test.mjs",
+    "directory:index": "tsx scripts/directory/rebuild-index.ts",
+    "test:directory": "tsx --test src/lib/directory-*.test.ts src/lib/company-pagination.test.ts src/lib/company-submission.test.ts scripts/security/directory-api.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

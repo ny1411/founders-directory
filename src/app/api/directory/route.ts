@@ -1,4 +1,4 @@
-import { buildDirectoryPage, getDirectorySnapshot } from "@/lib/directory-query"
+import { buildDirectoryPage, getDirectoryIndex } from "@/lib/directory-query"
 import { parseDirectoryRequest } from "@/lib/directory-request"
 import { adminDb } from "@/lib/firebase-admin"
 import { requestIp, reserveQuota } from "@/lib/rate-limit"
@@ -30,7 +30,7 @@ async function directoryGet(request: Request) {
 
   try {
     // CDN hits need no origin work. Cache misses must reserve a durable IP quota
-    // before loading the shared public snapshot or filtering any companies.
+    // before loading the compact index or reading any company page records.
     const quota = await reserveQuota(adminDb, "directory-search", "", requestIp(request), [
       { name: "search-ip-minute", subject: "ip", limit: 60, windowMs: 60000 },
     ])
@@ -40,8 +40,8 @@ async function directoryGet(request: Request) {
         headers: { "Retry-After": String(quota.retryAfterSeconds), "Cache-Control": "no-store" },
       })
     }
-    const snapshot = await getDirectorySnapshot()
-    const result = buildDirectoryPage(snapshot, query.params)
+    const index = await getDirectoryIndex()
+    const result = await buildDirectoryPage(index, query.params)
     return Response.json(result, {
       headers: {
         "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
