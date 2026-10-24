@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Firestore } from 'firebase-admin/firestore';
 import { createResumeExtractionHandler, MAX_RESUME_REQUEST_BYTES } from '../../src/lib/resume-extraction-handler';
+import { ProviderBudgetError } from '../../src/lib/provider-budget';
 import { MAX_RESUME_BYTES } from '../../src/lib/resume-upload';
 import { reserveResumeExtractionAttempt, RESUME_USAGE_WINDOW_MS } from '../../src/lib/resume-extraction-usage';
 
 function setup(options: { invalidToken?: boolean; limited?: boolean; usageDown?: boolean; modelFailure?: boolean } = {}) {
   const events: string[] = [];
   const handler = createResumeExtractionHandler({
+    admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
     verifyToken: async (token) => {
       events.push(`verify:${token}`);
       if (options.invalidToken) throw new Error('sensitive credential details');
@@ -68,6 +70,7 @@ test('successful extraction returns a private draft without persistence', async 
 test('malformed or empty model extractions are never returned as usable resumes', async () => {
   for (const value of [{}, { name: 'Ada', skills: 42 }, { name: 'Ada', projects: 'wrong shape' }]) {
     const handler = createResumeExtractionHandler({
+    admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
       verifyToken: async () => ({ uid: 'verified-user' }),
       reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
       extract: async () => JSON.stringify(value),
@@ -79,6 +82,7 @@ test('malformed or empty model extractions are never returned as usable resumes'
 test('non-job profiles are rejected before the upload body or paid model is read', async () => {
   let modelCalls = 0;
   const handler = createResumeExtractionHandler({
+    admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
     verifyToken: async () => ({ uid: 'verified-user' }),
     authorizeUpload: async () => false,
     reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
@@ -226,4 +230,18 @@ test('transaction retry evaluates the clock after reading current persisted stat
   } as unknown as Firestore;
   await reserveResumeExtractionAttempt(db, 'user', () => { events.push('clock'); return 1000; });
   assert.deepEqual(events, ['read', 'clock', 'write', 'read', 'clock', 'write']);
+});
+
+
+test('resume global provider rejection preserves safe HTTP status and retry guidance', async () => {
+  for (const status of [429, 503] as const) {
+    const handler = createResumeExtractionHandler({
+      admit: async () => ({allowed: true, retryAfterSeconds: 1}), verifyToken: async () => ({uid: 'owner'}),
+      reserveAttempt: async () => ({allowed: true, retryAfterSeconds: 0}),
+      extract: async () => {throw new ProviderBudgetError(status, status === 429 ? 'quota' : 'storage', 60);},
+    });
+    const response = await handler(upload());
+    assert.equal(response.status, status); assert.equal(response.headers.get('retry-after'), '60');
+    assert.equal((await response.json()).code, 'PROVIDER_LIMIT');
+  }
 });

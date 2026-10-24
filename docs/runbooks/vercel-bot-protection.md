@@ -19,6 +19,30 @@ deployment, validate the flow below, and later promote both to Production.
 Never enable the server flag without the matching public client flag, because
 legitimate browser requests would fail closed.
 
+Read-only verification on **October 21, 2026** found both flags explicitly
+`false` in Preview and Production, `CONTACT_ENRICHMENT_ENABLED=false`, and the
+project on Node.js 24. Real human BotID flows in those environments have not
+been verified. #59 supplies code guardrails; enabling and validating the paired
+flags, recording the browser evidence, and removing the temporary default-off
+gates remain tracked in **#47**. No live setting was changed for #59.
+
+`next.config.ts` diagnoses the pair at build/startup. Literal `true`/`true`
+enables protection; `false`/`false` or both unset preserves the rollout gate.
+Unset values also pair with `false`. Mixed enabled/disabled values and any
+nonliteral value reject startup, with bounded `bot_configuration` state/reason
+codes and no raw environment values. Runtime drift fails closed with the same
+safe `503` below after authentication. Public values are frozen at build time:
+changing flags requires a new deployment with both configured together.
+
+The shared browser policy is `src/lib/bot-policy.ts`. Company creation is
+invoked from `/company/new`; Next 15 posts imported Server Actions to the
+current canonical URL with `Next-Action`. Its server authorization, BotID and
+quota checks apply regardless of the URL used to replay an action. The staged
+Firewall policy also matches platform-classified `server_action` requests
+(including progressive forms without that header) OR the `Next-Action` header,
+always with Production + POST conditions. An ordinary POST is not sufficient.
+See the [Firewall coverage matrix](vercel-firewall-rate-limits.md#observation-thresholds).
+
 ## Request order and failure contract
 
 Each protected server path verifies Firebase credentials first. BotID runs only
@@ -33,7 +57,7 @@ resume, contact data, or generated message:
 | Condition | HTTP | Code | Client behavior |
 | --- | --- | --- | --- |
 | Missing/malformed proof or non-human classification | `403` | `BOT_VERIFICATION_REQUIRED` | Stop; ask the user to refresh once |
-| BotID/OIDC/provider failure | `503` | `BOT_VERIFICATION_UNAVAILABLE` | Stop; retry manually after 30 seconds |
+| BotID/OIDC/provider or configuration failure | `503` | `BOT_VERIFICATION_UNAVAILABLE` | Stop; retry manually after 30 seconds |
 
 Server Actions return the same sanitized message in their existing `{ error }`
 shape. There is no automatic retry loop. Logs use only the normalized route and
@@ -64,12 +88,14 @@ the four protected operations.
 
 In the Vercel dashboard, enable BotID for the project. Observe managed Bot
 Protection classifications in the Firewall traffic view before adding any
-challenge or deny rule. Start in Preview, then enable one Production operation
-at a time after reviewing false positives.
+challenge or deny rule. Start in Preview and validate all four operations
+before promoting the paired flags to Production; these are global flags,
+not independently configurable per operation.
 
 After the project, OIDC, and BotID configuration are ready, remove this
-temporary default-off feature gate in a follow-up change so a missing or
-misspelled environment variable cannot silently disable protection.
+temporary default-off feature gates in the follow-up tracked by #47 after its
+human Preview/Production checks and monitoring are recorded. Do not remove
+them while the verified deployed pair is still `false`/`false`.
 
 ## Preview verification
 
@@ -115,10 +141,11 @@ public bypass.
 
 ## Rollout and rollback
 
-Roll out in this order: resume extraction, message generation, contact
-enrichment, then company creation. For each step, watch BotID decisions, route
-volume, quota rejections, user reports, and provider usage for at least 24
-hours.
+With both flags enabled in Preview, validate resume extraction, message
+generation, contact enrichment, and company creation using mocked paid-provider
+boundaries where appropriate. Promote the paired configuration only after all
+four pass. Watch BotID decisions, route volume, quota rejections, user reports,
+and provider usage for at least 24 hours in Production and record evidence in #47.
 
 During the temporary rollout period, roll back BotID by setting both feature
 flags to `false` in the same deployment. After the temporary gate is removed,

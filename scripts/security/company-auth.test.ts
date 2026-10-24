@@ -20,6 +20,8 @@ type FixtureOptions = {
   failCommit?: boolean;
   existingSlug?: boolean;
   botResult?: { allowed: boolean; message?: string };
+  admission?: { allowed: boolean; retryAfterSeconds: number };
+  admissionDown?: boolean;
 };
 
 // Execute the real server action with in-memory Firebase boundaries only.
@@ -68,6 +70,13 @@ function fixture(options: FixtureOptions = {}) {
             await batch.commit();
             return result;
           },
+        },
+      };
+      if (name === '@/lib/admission-policy') return {
+        async reserveAdmission(_db: unknown, policy: string, uid: string) {
+          operations.push(`admission:${policy}:${uid}`);
+          if (options.admissionDown) throw new Error('private quota details');
+          return options.admission ?? { allowed: true, retryAfterSeconds: 1 };
         },
       };
       if (name === '@/lib/directory-cache') return { DIRECTORY_CACHE_TAG: 'company-directory' };
@@ -192,4 +201,17 @@ test('existing slug returns a field error with no writes or cache invalidation',
   assert.equal(result.fieldErrors?.slug, 'This URL slug is already in use.');
   assert.equal(action.writes.length, 0);
   assert.ok(!action.operations.some(operation => operation.startsWith('revalidate')));
+});
+
+
+test('company action rejects exhausted/storage-failed admission before validation or business writes', async () => {
+  for (const options of [{ admission: { allowed: false, retryAfterSeconds: 123 } }, { admissionDown: true }]) {
+    const action = fixture(options);
+    const result = await action.createCompany(new FormData(), 'fresh-token');
+    assert.match(result.error, /limit/);
+    assert.ok(action.operations.includes('admission:company-submit:signed-in-user'));
+    assert.equal(action.writes.length, 0);
+    assert.equal(action.operations.some(value => value.startsWith('collection:')), false);
+    assert.doesNotMatch(JSON.stringify(result), /private/);
+  }
 });

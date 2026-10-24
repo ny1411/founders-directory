@@ -1,3 +1,4 @@
+import { createAdmissionCheck } from '@/lib/admission-policy';
 import { GoogleGenAI } from '@google/genai';
 import { adminAuth, adminDb } from '@/lib/firebase-admin';
 import { createResumeExtractionHandler } from '@/lib/resume-extraction-handler';
@@ -5,15 +6,17 @@ import { reserveResumeExtractionAttempt } from '@/lib/resume-extraction-usage';
 import { OnboardingStore } from '@/lib/onboarding/store';
 import { createBotProtectedPost } from '@/lib/bot-verification';
 import { instrumentApiRoute } from '@/lib/observability-runtime';
+import { withProviderBudget } from '@/lib/provider-budget';
 
 export const runtime = 'nodejs';
 const onboardingStore = new OnboardingStore(adminDb);
 
 const extractResume = createResumeExtractionHandler({
+  admit: createAdmissionCheck(adminDb, 'resume-upload'),
   verifyToken: (token) => adminAuth.verifyIdToken(token, true),
   authorizeUpload: async (uid) => (await onboardingStore.load(uid)).goal?.type === 'job',
   reserveAttempt: (uid) => reserveResumeExtractionAttempt(adminDb, uid),
-  extract: async (buffer) => {
+  extract: (buffer) => withProviderBudget(adminDb, 'resume', async () => {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `
 You are an expert ATS (Applicant Tracking System) parser.
@@ -138,12 +141,13 @@ Structure the JSON as follows:
       ],
       config: {
         responseMimeType: 'application/json',
+        httpOptions: { timeout: 60_000, retryOptions: { attempts: 1 } },
       },
     });
 
     if (!response.text) throw new Error('Empty extraction response');
     return response.text;
-  },
+  }),
 });
 
 const protectedPost = createBotProtectedPost({

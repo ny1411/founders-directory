@@ -1,3 +1,4 @@
+import { admissionResponse, type AdmissionCheck } from './admission-policy';
 import type { Auth } from 'firebase-admin/auth';
 import type { Firestore } from 'firebase-admin/firestore';
 
@@ -20,11 +21,12 @@ function isRejectedCredential(error: unknown) {
 export function createAuthSyncHandler(
   auth: Pick<Auth, 'verifyIdToken'>,
   db: Pick<Firestore, 'collection'>,
+  admit: AdmissionCheck,
 ) {
   return async function POST(req: Request) {
     const match = /^Bearer ([^\s]+)$/i.exec(req.headers.get('Authorization') ?? '');
     if (!match) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      return Response.json({ error: 'Unauthorized' }, { status: 401, headers: { 'Cache-Control': 'private, no-store' } });
     }
 
     let identity;
@@ -33,15 +35,18 @@ export function createAuthSyncHandler(
       identity = await auth.verifyIdToken(match[1], true);
     } catch (error) {
       if (isRejectedCredential(error)) {
-        return Response.json({ error: 'Unauthorized' }, { status: 401 });
+        return Response.json({ error: 'Unauthorized' }, { status: 401, headers: { 'Cache-Control': 'private, no-store' } });
       }
       console.error('Error verifying account sync token:', error);
-      return Response.json({ error: 'Unable to sync account' }, { status: 500 });
+      return Response.json({ error: 'Unable to sync account' }, { status: 500, headers: { 'Cache-Control': 'private, no-store' } });
     }
 
     if (!identity.email) {
-      return Response.json({ error: 'An email address is required' }, { status: 403 });
+      return Response.json({ error: 'An email address is required' }, { status: 403, headers: { 'Cache-Control': 'private, no-store' } });
     }
+
+    const rejected = await admissionResponse(admit, identity.uid, req);
+    if (rejected) return rejected;
 
     try {
       // Identity comes exclusively from Firebase, never from request JSON.
@@ -52,10 +57,10 @@ export function createAuthSyncHandler(
       }, { merge: true });
 
       // Do not read or serialize the user document: it contains private resume data.
-      return Response.json({ user: { id: identity.uid, email: identity.email } });
+      return Response.json({ user: { id: identity.uid, email: identity.email } }, { headers: { 'Cache-Control': 'private, no-store' } });
     } catch (error) {
       console.error('Error syncing user:', error);
-      return Response.json({ error: 'Unable to sync account' }, { status: 500 });
+      return Response.json({ error: 'Unable to sync account' }, { status: 500, headers: { 'Cache-Control': 'private, no-store' } });
     }
   };
 }

@@ -136,14 +136,14 @@ function profile(company: object) {
 test('extracts actual founder data, retains zero employees, and uses stable logos', () => {
   const details = parseCompany(profile({
     slug: 'a', name: 'A & B', team_size: 0, tags: ['AI'],
-    small_logo_url: 'https://example.com/logo.png',
-    logo_url: 'https://example.com/logo.png?X-Amz-Expires=3600',
+    small_logo_url: 'https://bookface-images.s3.amazonaws.com/small_logos/logo.png',
+    logo_url: 'https://bookface-images.s3.us-west-2.amazonaws.com/logos/logo.png?X-Amz-Expires=3600',
     founders: [{ user_id: 1, full_name: 'Founder Name', title: 'Founder/CTO',
       founder_bio: 'Real bio', linkedin_url: 'https://linkedin.com/in/founder' }],
   }), company('a'));
   assert.equal(details.company.name, 'A & B');
   assert.equal(details.company.employees, 0);
-  assert.equal(details.company.logoUrl, 'https://example.com/logo.png');
+  assert.equal(details.company.logoUrl, 'https://bookface-images.s3.amazonaws.com/small_logos/logo.png');
   assert.equal(details.founders[0].role, 'Founder/CTO');
   assert.equal(details.founders[0].twitterUrl, null);
   assert.deepEqual(details.company.tags, ['AI']);
@@ -152,18 +152,18 @@ test('extracts actual founder data, retains zero employees, and uses stable logo
 test('normalizes supported image URLs and uses a valid listing logo', () => {
   assert.equal(normalizeImageUrl('/company/thumb/missing.png'), null);
   assert.equal(normalizeImageUrl('https://www.ycombinator.com/company/thumb/missing.png?size=64'), null);
-  assert.equal(normalizeImageUrl('  https://example.com/logo.png  '), 'https://example.com/logo.png');
-  assert.equal(normalizeImageUrl('/images/company-logo.png?size=64'), '/images/company-logo.png?size=64');
+  assert.equal(normalizeImageUrl('  https://bookface-images.s3.amazonaws.com/small_logos/logo.png  '), 'https://bookface-images.s3.amazonaws.com/small_logos/logo.png');
+  assert.equal(normalizeImageUrl('/images/company-logo.png'), '/images/company-logo.png');
   assert.equal(normalizeImageUrl('http://example.com/insecure-logo.png'), null);
   assert.equal(normalizeImageUrl('//example.com/protocol-relative-logo.png'), null);
   assert.equal(normalizeImageUrl('not-a-valid-image-url'), null);
   assert.equal(normalizeImageUrl('javascript:alert(1)'), null);
 
-  const listing = { ...company('a'), small_logo_thumb_url: 'https://example.com/listing.png' };
+  const listing = { ...company('a'), small_logo_thumb_url: 'https://bookface-images.s3.amazonaws.com/small_logos/listing.png' };
   const details = parseCompany(profile({
     slug: 'a', name: 'A', small_logo_url: '/company/thumb/missing.png', founders: [],
   }), listing);
-  assert.equal(details.company.logoUrl, 'https://example.com/listing.png');
+  assert.equal(details.company.logoUrl, 'https://bookface-images.s3.amazonaws.com/small_logos/listing.png');
 });
 
 test('does not fabricate missing founders or save error/redirect pages as companies', () => {

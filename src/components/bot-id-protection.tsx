@@ -2,22 +2,16 @@
 
 import { initBotId } from 'botid/client/core';
 import { useEffect } from 'react';
-
-const protectedRoutes = [
-  { path: '/company/new', method: 'POST' },
-  { path: '/api/enrich-contact', method: 'POST' },
-  { path: '/api/extract-resume', method: 'POST' },
-  { path: '/api/generate-dm', method: 'POST' },
-];
+import { BOTID_PROTECTED_ROUTES, isBotIdClientEnabled } from '@/lib/bot-policy';
 
 let initialized = false;
 
 export function BotIdProtection() {
   useEffect(() => {
-    if (process.env.NEXT_PUBLIC_BOTID_ENABLED !== 'true') return;
+    if (!isBotIdClientEnabled(process.env.NEXT_PUBLIC_BOTID_ENABLED)) return;
     if (initialized) return;
+    initBotId({ protect: BOTID_PROTECTED_ROUTES.map(route => ({ ...route })) });
     initialized = true;
-    initBotId({ protect: protectedRoutes });
   }, []);
   return null;
 }

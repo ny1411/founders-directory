@@ -12,6 +12,8 @@ export interface EnrichmentJob {
   polls?: number;
   results?: unknown[];
   reason?: string;
+  providerBudgetStatus?: 429 | 503;
+  retryAfterSeconds?: number;
 }
 interface Dependencies {
   enabled?(): boolean;
@@ -64,6 +66,9 @@ export function createEnrichmentHandlers(deps: Dependencies) {
         if (!quota.allowed) return json({error: 'Too many requests'}, 429, {'Retry-After': String(quota.retryAfterSeconds)});
         const job = await deps.status(uid, jobId);
         if (!job || job.expiresAt < Date.now()) return json({error: 'Job not found'}, 404);
+        if (job.status === 'failed' && job.reason === 'PROVIDER_BUDGET_REJECTED' && job.providerBudgetStatus) return json({
+          jobId, status: job.status, code: 'PROVIDER_BUDGET_REJECTED', error: `Contact lookup is temporarily limited. Try again in ${job.retryAfterSeconds || 30} seconds.`,
+        }, job.providerBudgetStatus, {'Retry-After': String(job.retryAfterSeconds || 30)});
         return json({jobId, status: job.status, ...(job.status === 'completed' ? {results: job.results} : {}), ...(job.reason ? {reason: job.reason} : {})}, 200, {'Retry-After': '3'});
       } catch { return json({error: 'Enrichment temporarily unavailable'}, 503, {'Retry-After': '30'}); }
     },
