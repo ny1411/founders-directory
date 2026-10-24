@@ -7,6 +7,8 @@ import { OnboardingStore } from '@/lib/onboarding/store';
 import { createBotProtectedPost } from '@/lib/bot-verification';
 import { instrumentApiRoute } from '@/lib/observability-runtime';
 import { withProviderBudget } from '@/lib/provider-budget';
+import { acquireLease, releaseLease } from '@/lib/rate-limit';
+import { RESUME_EXTRACTION_LEASE_MS } from '@/lib/resume-extraction-handler';
 
 export const runtime = 'nodejs';
 const onboardingStore = new OnboardingStore(adminDb);
@@ -15,8 +17,10 @@ const extractResume = createResumeExtractionHandler({
   admit: createAdmissionCheck(adminDb, 'resume-upload'),
   verifyToken: (token) => adminAuth.verifyIdToken(token, true),
   authorizeUpload: async (uid) => (await onboardingStore.load(uid)).goal?.type === 'job',
+  acquire: (uid) => acquireLease(adminDb, `resume-extraction:${uid}`, RESUME_EXTRACTION_LEASE_MS),
+  release: (uid, token) => releaseLease(adminDb, `resume-extraction:${uid}`, token),
   reserveAttempt: (uid) => reserveResumeExtractionAttempt(adminDb, uid),
-  extract: (buffer) => withProviderBudget(adminDb, 'resume', async () => {
+  extract: (buffer, assertOwnerFresh) => withProviderBudget(adminDb, 'resume', async () => {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const prompt = `
 You are an expert ATS (Applicant Tracking System) parser.
@@ -121,6 +125,8 @@ Structure the JSON as follows:
 }
     `;
 
+    // Recheck after the global budget transaction, which may have been slow.
+    assertOwnerFresh();
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-flash',
       contents: [
@@ -141,6 +147,7 @@ Structure the JSON as follows:
       ],
       config: {
         responseMimeType: 'application/json',
+        maxOutputTokens: 8192,
         httpOptions: { timeout: 60_000, retryOptions: { attempts: 1 } },
       },
     });

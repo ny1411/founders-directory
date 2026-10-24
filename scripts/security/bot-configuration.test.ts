@@ -1,3 +1,4 @@
+import { browserSecurityHeaders } from '../../src/lib/security-headers';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -42,6 +43,7 @@ test('the real Next startup configuration rejects a partial rollout before expor
         if (name === 'botid/next/config') return { withBotId: (config: unknown) => config };
         if (name === './src/lib/bot-policy') return { diagnoseBotIdConfiguration: (a: string, b: string) => policy.diagnoseBotIdConfiguration(a, b, () => {}) };
         if (name === './src/lib/image-policy') return imagePolicy;
+        if (name === './src/lib/security-headers') return { browserSecurityHeaders };
         throw new Error(`Unexpected import: ${name}`);
       },
     });

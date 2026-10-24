@@ -10,6 +10,8 @@ export type OnboardingRequest = (
   body?: Record<string, unknown>,
 ) => Promise<OnboardingState>;
 
+import { readRecovery, writeRecovery, removeRecovery } from "@/lib/onboarding/recovery-storage";
+
 const DEBOUNCE_MS = 1800;
 const RECOVERY_VERSION = 1;
 const RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -71,13 +73,13 @@ export function useOnboarding(request: OnboardingRequest, uid: string) {
     setLoadState("ready");
     setRecoveryAvailable(false);
     if (clearRecovery)
-      try { localStorage.removeItem(recoveryKey(uid)); } catch { /* Storage unavailable. */ }
+      try { removeRecovery(recoveryKey(uid)); } catch { /* Storage unavailable. */ }
   }, [uid]);
 
   const restore = useCallback((next: OnboardingState) => {
     let value: RecoveryDraft | null = null;
     try {
-      const raw = localStorage.getItem(recoveryKey(uid));
+      const raw = readRecovery(uid, recoveryKey(uid));
       if (raw) value = JSON.parse(raw) as RecoveryDraft;
     } catch { /* Ignore malformed or unavailable storage. */ }
     apply(next, false);
@@ -89,7 +91,7 @@ export function useOnboarding(request: OnboardingRequest, uid: string) {
         Object.values(value.answers).some((answer) => typeof answer !== "string") ||
         typeof value.summary !== "string" ||
         typeof value.summaryChanged !== "boolean") {
-      try { localStorage.removeItem(recoveryKey(uid)); } catch { /* Storage unavailable. */ }
+      try { removeRecovery(recoveryKey(uid)); } catch { /* Storage unavailable. */ }
       return;
     }
     if (value.goalId !== next.goal?.id) return;
@@ -105,7 +107,7 @@ export function useOnboarding(request: OnboardingRequest, uid: string) {
     setSummary(summaryDraft.current);
     if (Object.keys(value.answers).length || value.summaryChanged) {
       setStatus("Unsaved changes recovered");
-      try { localStorage.setItem(recoveryKey(uid), JSON.stringify(value)); } catch { /* Storage unavailable. */ }
+      try { writeRecovery(uid, recoveryKey(uid), JSON.stringify(value)); } catch { /* Storage unavailable. */ }
     }
   }, [apply, uid]);
 
@@ -172,7 +174,7 @@ export function useOnboarding(request: OnboardingRequest, uid: string) {
     try {
       const goal = current.current?.goal;
       if (!goal || !pending()) {
-        localStorage.removeItem(recoveryKey(uid));
+        removeRecovery(recoveryKey(uid));
         return;
       }
       const value: RecoveryDraft = {
@@ -185,16 +187,16 @@ export function useOnboarding(request: OnboardingRequest, uid: string) {
         answers: Object.fromEntries(Object.entries(draft.current).filter(
           ([id, answer]) => saved.current[id] !== answer,
         )),
-        summary: summaryDraft.current,
+        summary: summaryDraft.current !== summarySaved.current ? summaryDraft.current : "",
         summaryChanged: summaryDraft.current !== summarySaved.current,
       };
-      localStorage.setItem(recoveryKey(uid), JSON.stringify(value));
+      writeRecovery(uid, recoveryKey(uid), JSON.stringify(value));
     } catch { /* Storage unavailable. */ }
   }, [pending, uid]);
 
   const recoverDraft = useCallback(() => {
     try {
-      const raw = localStorage.getItem(recoveryKey(uid));
+      const raw = readRecovery(uid, recoveryKey(uid));
       if (!raw) return;
       const value = JSON.parse(raw) as RecoveryDraft;
       if (value.version !== RECOVERY_VERSION || value.expiresAt <= Date.now() ||

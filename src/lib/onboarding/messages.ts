@@ -1,3 +1,4 @@
+import { privateResponse } from "../observability-runtime";
 import { createHash } from "node:crypto";
 import { boundedJson } from "../bounded-json";
 import type { Company, Founder } from "../types";
@@ -121,7 +122,7 @@ interface Dependencies {
 }
 
 export function createMessageHandler(deps: Dependencies) {
-  return async (request: Request) => {
+  const handler = async (request: Request) => {
     const token = /^Bearer\s+(\S+)$/i.exec(
       request.headers.get("authorization") ?? "",
     )?.[1];
@@ -249,6 +250,7 @@ export function createMessageHandler(deps: Dependencies) {
           createdAt: now,
           updatedAt: now,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          deleteAfter: new Date(Date.now() + 24 * 60 * 60 * 1000),
         });
         return Response.json({ dmText: content });
       } finally {
@@ -264,4 +266,5 @@ export function createMessageHandler(deps: Dependencies) {
       return serverFailure();
     }
   };
+  return async (request: Request) => privateResponse(await handler(request));
 }

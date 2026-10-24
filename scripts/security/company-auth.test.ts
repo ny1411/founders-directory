@@ -1,3 +1,4 @@
+import { instrumentCompanySubmission } from '../../src/lib/observability-runtime';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -50,6 +51,7 @@ function fixture(options: FixtureOptions = {}) {
     exports,
     console: { error() {} },
     require(name: string) {
+      if (name === '@/lib/observability-runtime') return { instrumentCompanySubmission };
       if (name === '@/lib/firebase-admin') return {
         adminAuth: {
           async verifyIdToken(token: string, checkRevoked: boolean) {

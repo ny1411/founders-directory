@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
+import { setRecoveryOwner } from '@/lib/onboarding/recovery-storage';
 
 interface AuthContextType {
   user: User | null;
@@ -25,6 +26,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     
     try {
       const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setRecoveryOwner(currentUser?.uid ?? null);
         setUser(currentUser);
         setLoading(false);
       });

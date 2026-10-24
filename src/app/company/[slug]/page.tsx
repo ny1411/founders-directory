@@ -9,6 +9,7 @@ import { SendDmButton } from "@/components/send-dm-button"
 import { JsonLd } from "@/components/json-ld"
 import { EntityImage } from "@/components/entity-image"
 import { normalizeImageUrl } from "@/lib/image-url"
+import { publicFounder } from "@/lib/public-founder"
 
 export async function generateMetadata(
   props: { params: Promise<{ slug: string }> }
@@ -79,7 +80,7 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
 
   const founders = await getCompanyFounders(companyData.id);
 
-  const company = { ...companyData, founders };
+  const company = { ...companyData, founders: founders.map(publicFounder) };
   const companyLogoUrl = normalizeImageUrl(company.logoUrl);
 
   const jsonLd = {
@@ -325,7 +326,6 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
                   companySlug={company.slug} 
                   twitterUrl={founder.twitterUrl}
                   linkedinUrl={founder.linkedinUrl}
-                  email={founder.email}
                 />
               </div>
             ))}

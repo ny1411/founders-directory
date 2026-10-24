@@ -48,6 +48,8 @@ All entries use a 600-second fixed window, counting by IP, scoped to Production.
 | `GET` or `HEAD /api/profile` | 120 | 429 |
 | `PATCH` or `POST /api/profile` (shared budget) | 30 | 429 |
 | `GET` or `HEAD /api/directory` | 60 | 429 |
+| `POST /api/founder-contact` | 60 | 429 |
+| `POST /api/csp-report` | 120 | 429 |
 | `GET` or `HEAD /_next/image` (exact) | 300 | 429 after image/navigation review |
 | `POST /*` with Server Action metadata or `Next-Action` header | 30 | 429 after company submission review |
 

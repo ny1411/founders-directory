@@ -104,3 +104,16 @@ Verified on Node 24.19.0:
 The regression tests use isolated Firebase/provider boundaries. The build used
 read-only Firestore data for public static pages. No paid model/enrichment calls,
 production data mutations, rules changes or deployment changes were made.
+
+## Security CI follow-up (24 October 2026)
+
+The new production dependency audit uncovered two additional advisories:
+`body-parser` GHSA-27r3-jxmh-p828 and `zod` GHSA-mrhx-c7xc-m3w5.
+The lockfile now selects `body-parser` 2.4.0 and `zod` 4.6.7.
+`@vercel/cli-config` 0.3.1 pins vulnerable Zod 4.1.11 exactly, so a scoped
+`@vercel/cli-config` override selects the patched Zod 4.x release. Remove that
+override when the upstream package adopts a patched version. Other Zod consumers
+already accept this version. No direct dependency version ranges were changed.
+
+`npm audit --omit=dev` reports zero vulnerabilities after this update; this is
+a point-in-time result and the CI job reruns the audit on each change.

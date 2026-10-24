@@ -5,7 +5,7 @@ import { addRuleArgs, missingRules, observationRules } from './firewall-rules.mj
 
 test('every observation rule scopes environment, method and path and only logs exceeded limits', () => {
   const rules = observationRules();
-  assert.equal(rules.length, 14);
+  assert.equal(rules.length, 16);
   assert.equal(new Set(rules.map(rule => rule.name)).size, rules.length);
   for (const rule of rules) {
     for (const group of rule.conditionGroup) {

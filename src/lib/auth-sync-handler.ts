@@ -1,3 +1,4 @@
+import { instrumentPrivateHandler } from './observability-runtime';
 import { admissionResponse, type AdmissionCheck } from './admission-policy';
 import type { Auth } from 'firebase-admin/auth';
 import type { Firestore } from 'firebase-admin/firestore';
@@ -23,7 +24,7 @@ export function createAuthSyncHandler(
   db: Pick<Firestore, 'collection'>,
   admit: AdmissionCheck,
 ) {
-  return async function POST(req: Request) {
+  return instrumentPrivateHandler({route: '/api/auth/sync', event: 'auth.sync', durationMetric: 'auth.sync.duration_ms', provider: 'firebase_auth'}, async function POST(req: Request) {
     const match = /^Bearer ([^\s]+)$/i.exec(req.headers.get('Authorization') ?? '');
     if (!match) {
       return Response.json({ error: 'Unauthorized' }, { status: 401, headers: { 'Cache-Control': 'private, no-store' } });
@@ -37,7 +38,7 @@ export function createAuthSyncHandler(
       if (isRejectedCredential(error)) {
         return Response.json({ error: 'Unauthorized' }, { status: 401, headers: { 'Cache-Control': 'private, no-store' } });
       }
-      console.error('Error verifying account sync token:', error);
+      console.error('Error verifying account sync token');
       return Response.json({ error: 'Unable to sync account' }, { status: 500, headers: { 'Cache-Control': 'private, no-store' } });
     }
 
@@ -58,9 +59,9 @@ export function createAuthSyncHandler(
 
       // Do not read or serialize the user document: it contains private resume data.
       return Response.json({ user: { id: identity.uid, email: identity.email } }, { headers: { 'Cache-Control': 'private, no-store' } });
-    } catch (error) {
-      console.error('Error syncing user:', error);
+    } catch {
+      console.error('Error syncing user');
       return Response.json({ error: 'Unable to sync account' }, { status: 500, headers: { 'Cache-Control': 'private, no-store' } });
     }
-  };
+  });
 }

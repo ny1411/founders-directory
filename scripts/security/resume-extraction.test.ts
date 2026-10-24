@@ -9,6 +9,7 @@ import { reserveResumeExtractionAttempt, RESUME_USAGE_WINDOW_MS } from '../../sr
 function setup(options: { invalidToken?: boolean; limited?: boolean; usageDown?: boolean; modelFailure?: boolean } = {}) {
   const events: string[] = [];
   const handler = createResumeExtractionHandler({
+      acquire: async () => 'test-lease', release: async () => {},
     admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
     verifyToken: async (token) => {
       events.push(`verify:${token}`);
@@ -70,6 +71,7 @@ test('successful extraction returns a private draft without persistence', async 
 test('malformed or empty model extractions are never returned as usable resumes', async () => {
   for (const value of [{}, { name: 'Ada', skills: 42 }, { name: 'Ada', projects: 'wrong shape' }]) {
     const handler = createResumeExtractionHandler({
+      acquire: async () => 'test-lease', release: async () => {},
     admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
       verifyToken: async () => ({ uid: 'verified-user' }),
       reserveAttempt: async () => ({ allowed: true, retryAfterSeconds: 0 }),
@@ -82,6 +84,7 @@ test('malformed or empty model extractions are never returned as usable resumes'
 test('non-job profiles are rejected before the upload body or paid model is read', async () => {
   let modelCalls = 0;
   const handler = createResumeExtractionHandler({
+      acquire: async () => 'test-lease', release: async () => {},
     admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
     verifyToken: async () => ({ uid: 'verified-user' }),
     authorizeUpload: async () => false,
@@ -236,6 +239,7 @@ test('transaction retry evaluates the clock after reading current persisted stat
 test('resume global provider rejection preserves safe HTTP status and retry guidance', async () => {
   for (const status of [429, 503] as const) {
     const handler = createResumeExtractionHandler({
+      acquire: async () => 'test-lease', release: async () => {},
       admit: async () => ({allowed: true, retryAfterSeconds: 1}), verifyToken: async () => ({uid: 'owner'}),
       reserveAttempt: async () => ({allowed: true, retryAfterSeconds: 0}),
       extract: async () => {throw new ProviderBudgetError(status, status === 429 ? 'quota' : 'storage', 60);},
@@ -243,5 +247,52 @@ test('resume global provider rejection preserves safe HTTP status and retry guid
     const response = await handler(upload());
     assert.equal(response.status, status); assert.equal(response.headers.get('retry-after'), '60');
     assert.equal((await response.json()).code, 'PROVIDER_LIMIT');
+  }
+});
+
+test('owner lease rejects parallel extraction before attempt charging while other owners can proceed', async () => {
+  const leases = new Map<string, string>();
+  const attempts: string[] = [];
+  let finish!: () => void;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  let begin!: () => void;
+  const started = new Promise<void>(resolve => { begin = resolve; });
+  const handler = createResumeExtractionHandler({
+    admit: async () => ({allowed: true, retryAfterSeconds: 1}),
+    verifyToken: async uid => ({uid}),
+    acquire: async uid => { if (leases.has(uid)) return null; leases.set(uid, uid); return uid; },
+    release: async (uid, token) => { assert.equal(leases.get(uid), token); leases.delete(uid); },
+    reserveAttempt: async uid => { attempts.push(uid); return {allowed:true,retryAfterSeconds:1}; },
+    extract: async () => { begin(); await pending; return '{"name":"Candidate"}'; },
+  });
+  const first = handler(upload({token:'alice'}));
+  await started;
+  const duplicate = await handler(upload({token:'alice'}));
+  assert.equal(duplicate.status,429);
+  assert.equal(duplicate.headers.get('retry-after'),'120');
+  assert.deepEqual(attempts,['alice']);
+  const other = handler(upload({token:'bob'}));
+  finish();
+  assert.equal((await first).status,200);
+  assert.equal((await other).status,200);
+  assert.deepEqual(attempts,['alice','bob']);
+  assert.equal(leases.size,0);
+});
+
+test('owner lease fails closed and is released on quota, provider, malformed and oversized output failures', async () => {
+  for (const scenario of ['lock-down','quota-denied','quota-down','provider-down','invalid-json','too-large','success']) {
+    const events: string[] = [];
+    const handler = createResumeExtractionHandler({
+      admit: async () => ({allowed:true,retryAfterSeconds:1}), verifyToken:async()=>({uid:'owner'}),
+      acquire:async()=>{events.push('acquire');if(scenario==='lock-down')throw new Error('private storage details');return 'fenced-token';},
+      release:async(uid,token)=>{assert.equal(uid,'owner');assert.equal(token,'fenced-token');events.push('release');},
+      reserveAttempt:async()=>{events.push('quota');if(scenario==='quota-down')throw new Error('private quota');return {allowed:scenario!=='quota-denied',retryAfterSeconds:12};},
+      extract:async()=>{events.push('extract');if(scenario==='provider-down')throw new Error('private provider');return scenario==='invalid-json'?'private unparseable payload':scenario==='too-large'?' '.repeat(256*1024+1):'{"name":"Candidate"}';},
+    });
+    const response=await handler(upload());
+    assert.equal(response.status, scenario==='success'?200:scenario==='quota-denied'?429:['lock-down','quota-down'].includes(scenario)?503:502);
+    if(scenario==='lock-down')assert.deepEqual(events,['acquire']);
+    else assert.equal(events.at(-1),'release');
+    assert.doesNotMatch(await response.text(),/private storage|private quota|private provider|private unparseable/);
   }
 });
