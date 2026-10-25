@@ -1,6 +1,6 @@
 # Vercel Firewall rate limits (#35, #40)
 
-Project: `founders-directory` (`prj_oxUZTfhN9aAIwtcABk8dcX00nFvt`), team `ny1411` (`team_uk1Ii5k2P5wcgjeFoxW9ojfC`).
+Vercel project: `foundersdirectory` (`prj_oxUZTfhN9aAIwtcABk8dcX00nFvt`), repository `ny1411/founders-directory`, team `ny1411` (`team_uk1Ii5k2P5wcgjeFoxW9ojfC`).
 
 ## Current rollout status
 
@@ -18,6 +18,16 @@ There is no active API rate-limit enforcement. Both BotID flags remain
 explicitly `false` in Preview and Production; #47 retains the verified-human
 rollout and later removal of the temporary gates. #59 extends repository
 coverage and diagnostics only; no Firewall or environment setting was changed.
+
+Read-only recheck on **25 October 2026** used the Vercel connector with the
+explicit project/team IDs above. Active configuration version **2**, last
+updated `2026-10-20T06:36:51.860Z`, still has the sole homepage observation rule
+`rule_fd_35_observe_homepage_7Zngke`; managed Bot Protection is active with
+`challenge`. Comparing that active snapshot against the 16 repository rules
+reports **1 observation, 15 missing, 0 enforcement configured**. This includes
+the newer founder-contact, CSP-report, image and Server Action rules. A draft
+or a rule in repository source does not cover deployed traffic. The read-only
+recheck does not retest the earlier plan denial or prove BotID flag values.
 
 **Plan blocker:** do not rerun `--stage`, add the Preview probe rule, switch the
 homepage rule to `rate_limit`, or expect an edge 429 until Vercel confirms this
@@ -84,6 +94,49 @@ It also verifies both action OR groups survive CLI serialization and that the
 current Next transport uses the canonical URL. These are local coverage tests;
 live `server_action` classification, entitlement, draft validation, traffic,
 edge 429 evidence and false-positive review still belong to #40.
+
+## Read-only coverage audit
+
+Before staging or changing anything, save a fresh configuration response locally
+and compare its **active** version with the repository manifest:
+
+```bash
+vercel --non-interactive --scope ny1411 api '/v1/security/firewall/config?projectId=prj_oxUZTfhN9aAIwtcABk8dcX00nFvt&teamId=team_uk1Ii5k2P5wcgjeFoxW9ojfC' --method GET > /tmp/founders-firewall-config.json
+node scripts/security/firewall-audit.mjs /tmp/founders-firewall-config.json
+node --test scripts/security/firewall-audit.test.mjs
+```
+
+Alternatively, save the JSON result of the connector's `get_firewall_config`
+with `configVersion=active` and the explicit project/team IDs. This avoids any
+CLI linking or authentication changes. The audit itself makes no network
+requests and never stages, publishes, retries denied plan operations, or writes
+configuration. Do not commit raw configuration snapshots; unrelated rules can
+contain private IP addresses or header values. Its output keeps only fixed rule
+names, coverage states, the known project/team IDs and configuration metadata.
+Input is limited to 1 MiB. API errors, a draft-only snapshot, missing identity,
+and another project's configuration fail instead of being treated as empty.
+
+| State | Meaning and next step |
+| --- | --- |
+| `missing` | No active-snapshot rule has the expected name; verify manually before planning a draft. |
+| `observation` | The expected environment, methods, paths and rate policy are present with exceeded action `log`; requests are not rate limited by this rule. |
+| `enforcement_configured` | The same structural policy has exceeded action `rate_limit`, `challenge` or `deny`; Preview behavior, legitimate traffic and live edge enforcement still need evidence. |
+| `disabled` | The Firewall or matching rule is disabled. |
+| `invalid` | The matching rule is not positively active or the API marks it invalid. |
+| `drift` | Scope, threshold, counting policy, action or persistence differs; inspect the complete active rule rather than overwriting tuned settings. |
+| `conflict` | The expected name occurs more than once; inspect duplicate rules. |
+| `order_review` | An earlier potentially terminal rule may affect evaluation; inspect its conditions, priority and bypass behavior. |
+
+The checker compares exact named structural coverage, not arbitrary WAF
+expressions. Reordered AND/OR conditions and optional API null defaults are
+accepted. Renamed equivalent rules remain `missing`, and earlier terminal rules
+conservatively require review even when their paths may be unrelated. It does
+not simulate managed rules, IP blocks, live classification, regional counters,
+plan entitlement, threshold safety or actual request behavior. Exit status zero
+means a report was produced, **not** that protection passed; the report always
+leaves `readyToCloseIssue40=false`. Review the explicit counts and follow the
+staged rollout below. Do not close #40 until its operational acceptance evidence
+is complete.
 
 ## Stage and inspect
 
