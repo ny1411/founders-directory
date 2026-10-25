@@ -7,9 +7,9 @@ import {
   type Provider,
 } from './observability';
 
-// Custom Metrics need @vercel/functions plus project/plan support. Until the
-// Vercel project is visible again, this runtime emits the same bounded data as
-// structured logs; callers may inject metric() after entitlement is confirmed.
+// Custom Metrics need @vercel/functions plus project/plan support. The default
+// transport preserves validated measurements in structured metric logs; an
+// entitled project may inject metric() instead after deployed verification.
 const observability = createObservability();
 
 type RouteConfig = {
