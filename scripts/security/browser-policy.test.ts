@@ -71,9 +71,12 @@ test('private API outcomes remain uncacheable and logs exclude request identity 
       assert.equal(response.headers.get('cache-control'),'private, no-store');
     }
   } finally {console.info=original}
-  assert.equal(logs.length,8);
+  const records = logs.map(line => JSON.parse(String(line)));
+  const outcomes = records.filter(record => record.event === 'founder.contact');
+  assert.equal(outcomes.length,8);
+  assert.equal(records.filter(record => record.metric === 'api.quota_rejections').length,1);
   assert.doesNotMatch(JSON.stringify(logs),/PRIVATE-TOKEN|unique|private resume|private@example/);
-  assert.equal(JSON.parse(String(logs[5])).outcome,'rate_limited');
+  assert.equal(outcomes[5].outcome,'rate_limited');
 });
 
 test('real auth-sync and onboarding handlers audit rejections and read-only profile outcomes', async () => {
@@ -88,7 +91,7 @@ test('real auth-sync and onboarding handlers audit rejections and read-only prof
     const read = await f.handlers.GET(new Request('http://localhost/api/onboarding',{headers:{authorization:'Bearer audit-private-owner'}}));
     assert.equal(read.status,200);
   } finally {console.info=original}
-  const records=logs.map(line=>JSON.parse(line));
+  const records=logs.map(line=>JSON.parse(line)).filter(record=>record.event !== 'metric');
   assert.equal(records[0].event,'auth.sync');
   assert.equal(records[0].outcome,'rejected');
   assert.equal(records[1].event,'profile');

@@ -2,24 +2,39 @@
 
 This runbook is for sudden request, Function invocation, Active CPU, error, cache-miss, or Firewall growth in `ny1411/founders-directory`. The goal is to identify the responsible route or client cohort within 15 minutes, contain abuse without blocking broad legitimate populations, and recover with evidence.
 
+For a plain-language explanation of the issue, ownership, costs, and remaining
+setup, read [Monitoring explained](monitoring-explained.md).
+
+## Verified project and current evidence
+
+Read-only Vercel connector inspection on **25 October 2026** resolved team
+`ny1411` (`team_uk1Ii5k2P5wcgjeFoxW9ojfC`) and project **`foundersdirectory`**
+(`prj_oxUZTfhN9aAIwtcABk8dcX00nFvt`). The repository name remains
+`founders-directory`; do not use that spelling to infer the Vercel project name.
+The Observability configuration endpoint returned **404: Observability Plus is
+not enabled**. This establishes that feature's current availability, not the
+billing plan or absence of all platform alerts. No notification, alert setting,
+paid feature, or production configuration was changed during this inspection.
+
 ## Ownership and current limitations
 
 - **Incident owner:** the Vercel project owner (`ny1411`) until an on-call rotation is recorded here.
-- **Escalation:** a second project member with permission to inspect Observability and stage Firewall changes. This backup is not yet named; do not claim two-operator readiness until it is.
+- **Escalation:** a second person who can respond if the owner is unavailable. A solo maintainer can leave this unassigned and record the coverage gap; do not claim the issue's two-operator exercise is complete until another person participates.
 - **Notification destination:** an actively monitored destination must be selected and tested in Vercel. Repository code cannot configure or prove delivery to that destination.
-- **Plan:** Custom Metrics querying requires Observability Plus and may not be available on Hobby. Active CPU percentage alerts, historical retention, saved queries, and some Firewall alerts also vary by plan. Inspect the current project/team UI before relying on any alert or retention window.
-- **Fallback:** when a Custom Metric or threshold alert is unavailable, use the same low-cardinality measurements in structured Function logs, Web Analytics, Usage, and Firewall traffic. Export evidence immediately because Hobby log retention can be too short for a later reconstruction.
-- **Metric transport:** `src/lib/observability.ts` is dependency-free and uses an injected emitter. Routes must inject Vercel's `metric()` only when the project has `@vercel/functions` and plan support. Until route integration lands, the helper and tests do not prove deployed telemetry.
+- **Plan:** Observability Plus was confirmed unavailable on 25 October 2026. Billing tier, Active CPU percentage alerts, retention, saved-query availability, and notification settings still need inspection. Do not purchase a plan or assume an alert exists from this repository change.
+- **Fallback:** measurements are emitted as bounded JSON records in Function logs. Combine these with available Web Analytics, Usage, and Firewall views; export evidence within the verified retention window. Logs provide evidence when inspected, but do not send alerts or perform continuous monitoring by themselves.
+- **Metric transport:** without an injected emitter, `src/lib/observability.ts` writes each validated measurement as an `event: "metric"` record. Counts and durations are no longer discarded. An injected paid metrics emitter replaces this fallback to avoid duplicate measurements. Unit tests prove the contract; deployed ingestion remains to be verified.
 
 Record the current primary owner, backup, destination, plan, alert IDs, saved-view URLs, and last notification test here before closing #41:
 
 | Item | Current value | Verified at |
 | --- | --- | --- |
 | Primary owner | `ny1411` | Repository ownership only |
-| Backup operator | **TBD** | Not verified |
-| Alert destination | **TBD** | Not configured by this change |
-| Vercel plan / Observability Plus | **TBD** | Inspect team billing/settings |
-| Production project ID | **TBD** | Re-resolve; do not rely on stale IDs |
+| Backup operator | Unassigned | Solo-maintainer coverage gap; two-person exercise pending |
+| Alert destination | **TBD** | Not selected, configured, or tested |
+| Vercel billing plan | **TBD** | Not established by the available response |
+| Observability Plus | Not enabled | Vercel configuration API, 25 October 2026 |
+| Project name / ID | `foundersdirectory` / `prj_oxUZTfhN9aAIwtcABk8dcX00nFvt` | Vercel project lookup, 25 October 2026; production rollout readiness remains separate |
 | Last test notification | **TBD** | Not sent by this change |
 
 ## Telemetry contract
@@ -80,8 +95,8 @@ Create one saved incident dashboard for Production and an equivalent Preview vie
 Start with:
 
 ```bash
-vercel metrics schema vercel.request.count -S ny1411 -p founders-directory
-vercel metrics vercel.request.count -S ny1411 -p founders-directory \
+vercel metrics schema vercel.request.count -S ny1411 -p prj_oxUZTfhN9aAIwtcABk8dcX00nFvt
+vercel metrics vercel.request.count -S ny1411 -p prj_oxUZTfhN9aAIwtcABk8dcX00nFvt \
   --prod --group-by cache_result --since 1h
 ```
 
@@ -90,15 +105,47 @@ vercel metrics vercel.request.count -S ny1411 -p founders-directory \
 Invoke each instrumented operation on a deployed environment before expecting its metric schema to exist. Confirm dimensions before querying:
 
 ```bash
-vercel metrics schema -S ny1411 -p founders-directory
-vercel metrics schema directory.query.duration_ms -S ny1411 -p founders-directory
-vercel metrics directory.query.duration_ms -S ny1411 -p founders-directory \
+vercel metrics schema -S ny1411 -p prj_oxUZTfhN9aAIwtcABk8dcX00nFvt
+vercel metrics schema directory.query.duration_ms -S ny1411 -p prj_oxUZTfhN9aAIwtcABk8dcX00nFvt
+vercel metrics directory.query.duration_ms -S ny1411 -p prj_oxUZTfhN9aAIwtcABk8dcX00nFvt \
   -a p95 --group-by route --since 1h
-vercel metrics api.quota_rejections -S ny1411 -p founders-directory \
+vercel metrics api.quota_rejections -S ny1411 -p prj_oxUZTfhN9aAIwtcABk8dcX00nFvt \
   -a sum --group-by route --since 1h
 ```
 
-If Custom Metrics is unavailable, filter structured logs by `event`, `route`, `outcome`, `error_code`, and the incident correlation IDs. Never paste raw private requests into an incident ticket.
+Those Custom Metrics commands apply only after entitlement and transport are
+verified. With the currently confirmed fallback, filter Function logs by
+`event = metric`, then by `metric` and bounded `tags.route` / `tags.outcome`.
+For example, an application quota denial emits:
+
+```json
+{"event":"metric","metric":"api.quota_rejections","value":1,"tags":{"route":"/api/generate-dm","outcome":"rate_limited","quota_decision":"rejected"},"timestamp":"2026-10-25T00:00:00.000Z"}
+```
+
+For one environment, deployment, and time window:
+
+- Sum `value` for `api.quota_rejections` by `tags.route` to find rejected calls.
+- Sum `value` for an `.attempts` metric to count instrumented handler responses.
+  These are handler attempts, including denials, not a billing ledger or proof
+  that a provider call occurred.
+- Use `value` for `.duration_ms` metrics to compare route durations; average,
+  maximum, and percentiles require a tool that supports the aggregation.
+- Operation records such as `event = dm_generation` retain route, outcome,
+  status, elapsed time, and correlation ID. Use them for investigation. Do not
+  add these records to metric counts: timer measurements and operation records
+  describe the same operation.
+
+Only captured logs are represented; expiration, sampling, log limits, and
+unlogged edge traffic can leave gaps. An absent log is not proof of zero traffic.
+Record the export window and deployment with the evidence. Never paste raw
+private requests into an incident ticket. These log records neither create a
+saved Vercel Custom Metric nor configure an alert destination.
+
+A shared API wrapper emits one duration metric and one operation record, plus
+one attempt metric when configured and one quota metric for a `429`: two to four
+records per completed wrapper call. Each record has a fixed schema; volume still
+grows with request count. Independent security/provider logs may add records.
+Include this added volume when checking retention and log-usage limits.
 
 ### Firewall behavior
 
@@ -108,8 +155,8 @@ If Custom Metrics is unavailable, filter structured logs by `event`, `route`, `o
 - Rules with unexpectedly high matches from legitimate navigation, crawlers, link previews, shared networks, or onboarding autosave.
 
 ```bash
-vercel firewall traffic list --scope ny1411 --project founders-directory --since 1h --json
-vercel firewall alerts list --scope ny1411 --project founders-directory --since 1h --json
+vercel firewall traffic list --scope ny1411 --project prj_oxUZTfhN9aAIwtcABk8dcX00nFvt --since 1h --json
+vercel firewall alerts list --scope ny1411 --project prj_oxUZTfhN9aAIwtcABk8dcX00nFvt --since 1h --json
 ```
 
 Treat IP/JA4/user-agent as investigation evidence, not identity or proof of malice. Do not copy these values into application metrics.
