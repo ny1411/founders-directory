@@ -1,5 +1,6 @@
 'use server'
 
+import { instrumentCompanySubmission } from "@/lib/observability-runtime"
 import { reserveAdmission } from "@/lib/admission-policy"
 import { adminAuth, adminDb } from "@/lib/firebase-admin"
 import { DIRECTORY_CACHE_TAG } from "@/lib/directory-cache"
@@ -12,6 +13,10 @@ import { headers } from "next/headers"
 import { redirect } from "next/navigation"
 
 export async function createCompany(formData: FormData, idToken: string): Promise<CompanySubmissionResult> {
+  return instrumentCompanySubmission(() => createCompanyAction(formData, idToken))
+}
+
+async function createCompanyAction(formData: FormData, idToken: string): Promise<CompanySubmissionResult> {
   if (typeof idToken !== 'string' || !idToken.trim()) {
     return { error: 'Please sign in before adding a company.' }
   }
@@ -48,9 +53,9 @@ export async function createCompany(formData: FormData, idToken: string): Promis
       error: 'That company slug is already in use. Choose a different URL slug.',
       fieldErrors: { slug: 'This URL slug is already in use.' },
     }
-  } catch (error) {
-    console.error('Company submission failed', error)
-    return { error: 'Could not save the company. Please try again.' }
+  } catch {
+    console.error('Company submission failed')
+    return { error: 'Could not save the company. Please try again.', code: 'SAVE_FAILED' }
   }
 
   revalidateTag(DIRECTORY_CACHE_TAG)

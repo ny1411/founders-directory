@@ -19,11 +19,10 @@ interface ColdDmModalProps {
   companySlug: string;
   twitterUrl?: string | null;
   linkedinUrl?: string | null;
-  email?: string | null;
   onClose: () => void;
 }
 
-export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, linkedinUrl, email, onClose }: ColdDmModalProps) {
+export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, linkedinUrl, onClose }: ColdDmModalProps) {
   const { user } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -31,14 +30,20 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
   const [recoveringSession, setRecoveringSession] = useState(false);
   const [dmText, setDmText] = useState('');
   const [copied, setCopied] = useState(false);
-  const [localEmail, setLocalEmail] = useState(email);
+  const [localEmail, setLocalEmail] = useState<{uid: string; founderId: string; email: string} | null>(null);
   const [enriching, setEnriching] = useState(false);
   const [enrichError, setEnrichError] = useState('');
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const enrichmentRequestRef = useRef<{founderId: string; key: string} | null>(null);
   const enrichmentAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => () => enrichmentAbortRef.current?.abort(), []);
+  useEffect(() => {
+    setLocalEmail(null);
+    setDmText('');
+    setEnriching(false);
+    enrichmentRequestRef.current = null;
+    return () => enrichmentAbortRef.current?.abort();
+  }, [user?.uid, founderId]);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -173,8 +178,9 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
   };
 
   const handleEmailClick = async () => {
-    if (localEmail) {
-      handleSend(`mailto:${localEmail}`);
+    if (!user) return;
+    if (localEmail && localEmail.uid === user.uid && localEmail.founderId === founderId) {
+      handleSend(`mailto:${localEmail.email}`);
       return;
     }
 
@@ -188,10 +194,26 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
 
     try {
       if (!user) throw new Error('Sign in again to find contact information.');
-      const token = await user.getIdToken();
-      if (enrichmentRequestRef.current?.founderId !== founderId) enrichmentRequestRef.current = {founderId, key: crypto.randomUUID()};
       const controller = new AbortController();
       enrichmentAbortRef.current = controller;
+      const token = await user.getIdToken();
+      if (controller.signal.aborted) return;
+      const existing = await fetch('/api/founder-contact', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+        body: JSON.stringify({founderId, companySlug}),
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      const contact = await existing.json();
+      if (controller.signal.aborted) return;
+      if (!existing.ok) throw new Error('Contact lookup temporarily unavailable. Please try again.');
+      if (typeof contact.email === 'string' && contact.email) {
+        setLocalEmail({uid: user.uid, founderId, email: contact.email});
+        window.location.href = `mailto:${contact.email}`;
+        return;
+      }
+      if (enrichmentRequestRef.current?.founderId !== founderId) enrichmentRequestRef.current = {founderId, key: crypto.randomUUID()};
       const res = await fetch('/api/enrich-contact', {
         method: 'POST',
         headers: {
@@ -204,6 +226,7 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
       });
 
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (!res.ok) throw new Error(data.error || 'Unable to start contact lookup.');
       // POST returns metadata only, including for completed idempotent retries.
       // Always fetch the authenticated owner-scoped status at least once.
@@ -217,6 +240,7 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
         });
         const response = await fetch(data.statusUrl, {headers: {Authorization: `Bearer ${await user.getIdToken()}`}, signal: controller.signal, cache: 'no-store'});
         job = await response.json();
+        if (controller.signal.aborted) return;
         // Only this authenticated terminal state proves no paid POST occurred.
         // Keep the same key for network failures and ambiguous provider errors.
         if (job.status === 'failed' && job.code === 'PROVIDER_BUDGET_REJECTED' && [429, 503].includes(response.status)) enrichmentRequestRef.current = null;
@@ -227,7 +251,7 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
       const enrichedEmail = job.results?.[0]?.workEmail;
 
       if (enrichedEmail) {
-        setLocalEmail(enrichedEmail);
+        setLocalEmail({uid: user.uid, founderId, email: enrichedEmail});
         // Use window.location.href instead of window.open to avoid popup blockers after async operation
         window.location.href = `mailto:${enrichedEmail}`;
       } else {

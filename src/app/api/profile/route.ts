@@ -9,6 +9,7 @@ const handler = createOnboardingHandler(
   (token, revoked) => adminAuth.verifyIdToken(token, revoked),
   new OnboardingStore(adminDb),
   { read: createAdmissionCheck(adminDb, "profile-read"), write: createAdmissionCheck(adminDb, "profile-write") },
+  "/api/profile",
 );
 export const GET = handler.GET;
 export const PATCH = handler.PATCH;

@@ -2,7 +2,7 @@ import { normalizeImageUrl } from './image-url'
 
 /** The same limits apply to browser forms and independently called server actions. */
 export const MAX_FOUNDERS = 10
-export type CompanySubmissionResult = { error: string; fieldErrors?: Record<string, string>; code?: 'RATE_LIMITED' | 'LIMIT_UNAVAILABLE'; retryAfterSeconds?: number }
+export type CompanySubmissionResult = { error: string; fieldErrors?: Record<string, string>; code?: 'RATE_LIMITED' | 'LIMIT_UNAVAILABLE' | 'SAVE_FAILED'; retryAfterSeconds?: number }
 export type CompanySubmission = {
   company: { name: string; slug: string; description: string | null; website: string | null;
     logoUrl: string | null; vcBacker: string | null; industry: string | null; employees: number | null;

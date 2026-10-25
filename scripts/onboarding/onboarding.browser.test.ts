@@ -41,7 +41,9 @@ test(
         contents: `import React from "react"; import { createRoot } from "react-dom/client";
       import { OnboardingForm } from "./src/components/onboarding/onboarding-form";
       import { readOnboardingResponse } from "./src/lib/profile-load";
+      import { setRecoveryOwner } from "./src/lib/onboarding/recovery-storage";
       const uid = new URLSearchParams(location.search).get("uid");
+      setRecoveryOwner(uid);
       const request = async (method, body) => {
         const response = await fetch("/api/onboarding", {method, headers:{authorization:"Bearer " + uid,"content-type":"application/json"}, ...(body ? {body:JSON.stringify(body)} : {})});
         return readOnboardingResponse(response);
@@ -123,6 +125,7 @@ test(
         let result: Response;
         if (incoming.url === "/api/extract-resume") {
           result = await createResumeExtractionHandler({
+      acquire: async () => 'test-lease', release: async () => {},
     admit: async () => ({ allowed: true, retryAfterSeconds: 1 }),
             verifyToken: async (token) => {
               assert.equal(token, uid);
@@ -434,6 +437,10 @@ test(
         const uid = "browser-recovery-conflict";
         const page = await open(uid);
         await choose(page, "sell_services");
+        // Goal selection applies asynchronously and clears obsolete recovery data.
+        // Seed a draft only once that response has rendered the questionnaire.
+        await page.locator("#about").waitFor();
+        await saved(page);
         const f = getFixture(uid);
         const before = await f.state();
         await page.evaluate(({ owner, draft }) => localStorage.setItem(

@@ -1,3 +1,4 @@
+import { instrumentCompanySubmission } from '../../src/lib/observability-runtime';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -6,9 +7,22 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { validateCompanySubmission } from '../../src/lib/company-submission';
 import { storeCompanySubmission } from '../../src/lib/company-submission-store';
-import { companyCacheTag, normalizeCompanySlug } from '../../src/lib/company-query';
 
 const require = createRequire(import.meta.url);
+// Load the real cache helpers without initializing a production Firebase app.
+const companyQuery = {} as typeof import('../../src/lib/company-query');
+runInNewContext(ts.transpileModule(readFileSync(new URL('../../src/lib/company-query.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, {
+  exports: companyQuery,
+  require(name: string) {
+    if (name === './firebase-admin') return { adminDb: {} };
+    if (name === 'react') return { cache: (callback: unknown) => callback };
+    if (name === 'next/cache') return { unstable_cache: (callback: unknown) => callback };
+    throw new Error(`Unexpected company-query import: ${name}`);
+  },
+});
+const { companyCacheTag, normalizeCompanySlug } = companyQuery;
 const { redirect } = require('next/navigation') as { redirect: (url: string) => never };
 const actionSource = readFileSync(new URL('../../src/app/actions.ts', import.meta.url), 'utf8');
 const compiledAction = ts.transpileModule(actionSource, {
@@ -50,6 +64,7 @@ function fixture(options: FixtureOptions = {}) {
     exports,
     console: { error() {} },
     require(name: string) {
+      if (name === '@/lib/observability-runtime') return { instrumentCompanySubmission };
       if (name === '@/lib/firebase-admin') return {
         adminAuth: {
           async verifyIdToken(token: string, checkRevoked: boolean) {

@@ -16,6 +16,8 @@ const definitions = [
   ['profile-read', ['GET', 'HEAD'], '/api/profile', 'eq', 120],
   ['profile-write', ['PATCH', 'POST'], '/api/profile', 'eq', 30],
   ['directory', ['GET', 'HEAD'], '/api/directory', 'eq', 60],
+  ['founder-contact', ['POST'], '/api/founder-contact', 'eq', 60],
+  ['csp-report', ['POST'], '/api/csp-report', 'eq', 120],
   ['image-optimizer', ['GET', 'HEAD'], '/_next/image', 'eq', 300],
   ['server-actions', ['POST'], '/', 'pre', 30],
 ];

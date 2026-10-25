@@ -157,6 +157,7 @@ test('early resume admission precedes profile load, multipart parsing and paid a
     else for (let i = 0; i < 5; i++) await admit('alice', request('/api/extract-resume'));
     const events: string[] = [];
     const handler = createResumeExtractionHandler({
+      acquire: async () => 'test-lease', release: async () => {},
       admit,
       verifyToken: async token => { events.push('verify'); return { uid: token }; },
       authorizeUpload: async () => { events.push('load'); return true; },

@@ -7,6 +7,9 @@
  */
 
 export const METRIC_NAMES = [
+  'auth.sync.duration_ms',
+  'profile.duration_ms',
+  'company.submit.duration_ms',
   'directory.query.duration_ms',
   'directory.query.result_count',
   'directory.query.candidate_count',
@@ -24,6 +27,7 @@ export const METRIC_NAMES = [
 
 export const NORMALIZED_ROUTES = [
   '/',
+  '/company/new',
   '/company/[slug]',
   '/company/[slug]/opengraph-image',
   '/api/directory',
@@ -34,6 +38,7 @@ export const NORMALIZED_ROUTES = [
   '/api/onboarding',
   '/api/profile',
   '/api/auth/sync',
+  '/api/founder-contact',
   '/other',
 ] as const;
 
@@ -52,6 +57,8 @@ export const LOG_EVENTS = [
   'resume_extraction',
   'profile',
   'auth.sync',
+  'company.submit',
+  'founder.contact',
 ] as const;
 export const ERROR_CODES = [
   'bad_request',
@@ -189,6 +196,7 @@ export function normalizeRoute(input: string | URL): NormalizedRoute {
   }
 
   if (pathname === '/') return '/';
+  if (pathname === '/company/new') return '/company/new';
   if (/^\/company\/[^/]+\/opengraph-image\/?$/.test(pathname)) return '/company/[slug]/opengraph-image';
   if (/^\/company\/[^/]+\/?$/.test(pathname)) return '/company/[slug]';
   if (/^\/api\/enrich-contact\/[^/]+\/?$/.test(pathname)) return '/api/enrich-contact/[jobId]';

@@ -88,7 +88,8 @@ const generateMessage = createMessageHandler({
       : null;
   },
   save: async (key, value) => {
-    await adminDb.collection("generatedMessages").doc(key).set(value);
+    if (typeof value.expiresAt !== "string" || !Number.isFinite(Date.parse(value.expiresAt))) throw new Error("Invalid message expiry");
+    await adminDb.collection("generatedMessages").doc(key).set({ ...value, deleteAfter: new Date(value.expiresAt) });
   },
   generate: ({ instructions, data }) => withProviderBudget(adminDb, "dm", async () =>
     (
@@ -99,6 +100,7 @@ const generateMessage = createMessageHandler({
         contents: JSON.stringify(data),
         config: {
           systemInstruction: instructions,
+          maxOutputTokens: 1024,
           httpOptions: { timeout: 60_000, retryOptions: { attempts: 1 } },
         },
       })

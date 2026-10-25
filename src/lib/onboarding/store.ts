@@ -25,6 +25,7 @@ import type {
 } from "./types";
 
 export const PRIMARY_GOAL_ID = "primary"; // Read compatibility for the first onboarding release.
+export const SUPERSEDED_RESUME_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 function newGoal(
   id: string,
@@ -83,6 +84,7 @@ export class OnboardingStore {
       rawFileRetention: "not_stored",
       importedAt: now,
       updatedAt: now,
+      deleteAfter: null,
     };
     return { id: `resume-${contentHash}`, source };
   }
@@ -525,6 +527,12 @@ export class OnboardingStore {
         source.derivedFrom = current.profile.resumeSourceId;
       const prefill = resumePrefill(data);
       const sameSource = current.profile.resumeSourceId === id;
+      if (!sameSource && current.profile.resumeSourceId) {
+        transaction.set(this.refs(uid).user.collection("sources").doc(current.profile.resumeSourceId), {
+          supersededAt: now,
+          deleteAfter: new Date(Date.parse(now) + SUPERSEDED_RESUME_RETENTION_MS),
+        }, {merge: true});
+      }
       transaction.set(
         this.refs(uid).user.collection("sources").doc(id),
         source,
