@@ -437,6 +437,10 @@ test(
         const uid = "browser-recovery-conflict";
         const page = await open(uid);
         await choose(page, "sell_services");
+        // Goal selection applies asynchronously and clears obsolete recovery data.
+        // Seed a draft only once that response has rendered the questionnaire.
+        await page.locator("#about").waitFor();
+        await saved(page);
         const f = getFixture(uid);
         const before = await f.state();
         await page.evaluate(({ owner, draft }) => localStorage.setItem(
