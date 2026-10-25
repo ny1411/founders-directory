@@ -119,6 +119,15 @@ export type StructuredLog = Readonly<LogFields & {
 
 export type LogWriter = (record: StructuredLog) => void;
 
+/** Fallback measurements use the same validated schema as a metrics transport. */
+export type MetricLog = Readonly<{
+  event: 'metric';
+  metric: MetricName;
+  value: number;
+  tags: Readonly<Record<string, string>>;
+  timestamp: string;
+}>;
+
 type Clock = {now: () => number; isoNow: () => string};
 
 const METRIC_TAG_VALUES: Record<keyof MetricTags, readonly string[]> = {
@@ -261,6 +270,7 @@ export function sanitizeLogFields(input: unknown): Readonly<LogFields> {
 
 export type ObservabilityOptions = {
   emitMetric?: MetricEmitter;
+  writeMetricLog?: (record: MetricLog) => void;
   writeLog?: LogWriter;
   clock?: Partial<Clock>;
   correlationIdFactory?: () => string;
@@ -282,8 +292,8 @@ export type TimerFinish = {
 };
 
 export function createObservability(options: ObservabilityOptions = {}) {
-  const emitMetric = options.emitMetric ?? (() => {});
   const writeLog = options.writeLog ?? ((record: StructuredLog) => console.info(JSON.stringify(record)));
+  const writeMetricLog = options.writeMetricLog ?? ((record: MetricLog) => console.info(JSON.stringify(record)));
   const now = options.clock?.now ?? (() => performance.now());
   const isoNow = options.clock?.isoNow ?? (() => new Date().toISOString());
   const correlationIdFactory = options.correlationIdFactory ?? createCorrelationId;
@@ -291,7 +301,9 @@ export function createObservability(options: ObservabilityOptions = {}) {
   function metric(name: MetricName, value: number, tags: MetricTags = {}) {
     assertKnown(name, METRIC_NAMES, 'metric name');
     assertFiniteNonNegative(value, 'metric value');
-    emitMetric(name, value, validateMetricTags(tags));
+    const safeTags = validateMetricTags(tags);
+    if (options.emitMetric) options.emitMetric(name, value, safeTags);
+    else writeMetricLog(Object.freeze({event: 'metric', metric: name, value, tags: safeTags, timestamp: isoNow()}));
   }
 
   function log(event: LogEvent, correlationId: string, fields: LogFields): StructuredLog {

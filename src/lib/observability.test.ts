@@ -6,6 +6,7 @@ import {
   sanitizeLogFields,
   validateMetricTags,
   type MetricEmitter,
+  type MetricLog,
   type StructuredLog,
 } from './observability';
 
@@ -60,12 +61,53 @@ test('route instrumentation emits bounded duration, attempt, quota, and status t
   } finally {
     console.info = original;
   }
-  assert.equal(logs.length, 1);
-  const record = JSON.parse(logs[0]);
+  const records = logs.map(line => JSON.parse(line));
+  const metrics = records.filter(record => record.event === 'metric');
+  assert.equal(records.length, 4);
+  assert.deepEqual(metrics.map(({metric, value}) => [metric, value]).slice(0, 2), [
+    ['dm_generation.attempts', 1], ['api.quota_rejections', 1],
+  ]);
+  assert.equal(metrics[2].metric, 'dm_generation.duration_ms');
+  assert.equal(metrics[2].tags.route, '/api/generate-dm');
+  const record = records.find(record => record.event === 'dm_generation');
   assert.equal(record.route, '/api/generate-dm');
   assert.equal(record.outcome, 'rate_limited');
   assert.equal(record.status_code, 429);
   assert.equal('authorization' in record, false);
+});
+
+test('fallback preserves standalone measurements without a paid metrics transport', () => {
+  const records: MetricLog[] = [];
+  const telemetry = createObservability({
+    writeMetricLog: record => records.push(record),
+    clock: {isoNow: () => '2026-10-25T00:00:00.000Z'},
+  });
+  telemetry.metric('api.quota_rejections', 1, {
+    route: '/api/generate-dm', outcome: 'rate_limited', quota_decision: 'rejected',
+  });
+  assert.deepEqual(records, [{
+    event: 'metric', metric: 'api.quota_rejections', value: 1,
+    tags: {route: '/api/generate-dm', outcome: 'rate_limited', quota_decision: 'rejected'},
+    timestamp: '2026-10-25T00:00:00.000Z',
+  }]);
+  assert.ok(Object.isFrozen(records[0]));
+  assert.ok(Object.isFrozen(records[0].tags));
+  assert.throws(() => telemetry.metric('api.quota_rejections', 1, {user_id: 'private'} as never), /forbidden/);
+  assert.throws(() => telemetry.metric('api.quota_rejections', Infinity), /finite/);
+  assert.throws(() => telemetry.metric('api.quota_rejections', 1, {route: '/company/private-slug'} as never), /bounded/);
+  assert.equal(records.length, 1, 'invalid measurements never reach the log writer');
+});
+
+test('injected metrics transport suppresses fallback to prevent double counting', () => {
+  const emitted: Parameters<MetricEmitter>[] = [];
+  const fallback: MetricLog[] = [];
+  const telemetry = createObservability({
+    emitMetric: (...args) => emitted.push(args),
+    writeMetricLog: record => fallback.push(record),
+  });
+  telemetry.metric('api.quota_rejections', 1, {route: '/api/profile'});
+  assert.equal(emitted.length, 1);
+  assert.equal(fallback.length, 0);
 });
 
 test('rejects sensitive, unique, unknown, and invalid metric tags at runtime', () => {
