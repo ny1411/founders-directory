@@ -1,4 +1,8 @@
 import { boundedJson } from './bounded-json';
+import { createCorrelationId, createObservability } from './observability';
+import { instrumentApiRoute } from './observability-runtime';
+
+const observability = createObservability();
 export const MAX_ENRICHMENT_BATCH = 5;
 export interface EnrichmentJob {
   uid: string;
@@ -48,7 +52,9 @@ export function createEnrichmentHandlers(deps: Dependencies) {
         const job = await deps.start(uid, founderIds, body.companySlug, key, request);
         if (!job) return json({error: 'An enrichment job is already running. Please wait.'}, 409, {'Retry-After': '10'});
         if ('conflict' in job) return json({error: 'This idempotency key was already used for another request.'}, 409);
-        console.info(JSON.stringify({event: 'enrichment_accepted', route: '/api/enrich-contact', jobId: job.jobId, batchSize: founderIds.length, quota: 'allowed'}));
+        observability.log('contact_enrichment.accepted', createCorrelationId(), {
+          route: '/api/enrich-contact', outcome: 'success', batch_size: founderIds.length, quota_decision: 'allowed',
+        });
         return json({...job, statusUrl: `/api/enrich-contact/${job.jobId}`}, 202, {'Retry-After': '3'});
       } catch (error) {
         if (error && typeof error === 'object' && 'retryAfterSeconds' in error) return json({error: 'Enrichment limit reached'}, 429, {'Retry-After': String(error.retryAfterSeconds)});
@@ -56,7 +62,10 @@ export function createEnrichmentHandlers(deps: Dependencies) {
         return json({error: 'Enrichment temporarily unavailable'}, 503, {'Retry-After': '30'});
       }
     },
-    GET: async (request: Request, jobId: string) => {
+    GET: instrumentApiRoute({
+      route: '/api/enrich-contact/[jobId]', event: 'contact_enrichment.status',
+      durationMetric: 'contact_enrichment.status.duration_ms', provider: 'firestore',
+    }, async (request: Request, jobId: string) => {
       const uid = await authenticate(request);
       if (!uid) return json({error: 'Unauthorized'}, 401);
       if (deps.enabled && !deps.enabled()) return json({error: 'Contact lookup temporarily unavailable'}, 503, {'Retry-After': '60'});
@@ -71,6 +80,6 @@ export function createEnrichmentHandlers(deps: Dependencies) {
         }, job.providerBudgetStatus, {'Retry-After': String(job.retryAfterSeconds || 30)});
         return json({jobId, status: job.status, ...(job.status === 'completed' ? {results: job.results} : {}), ...(job.reason ? {reason: job.reason} : {})}, 200, {'Retry-After': '3'});
       } catch { return json({error: 'Enrichment temporarily unavailable'}, 503, {'Retry-After': '30'}); }
-    },
+    }),
   };
 }

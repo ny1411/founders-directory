@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { boundedJson } from './bounded-json';
+import { instrumentPrivateHandler } from './observability-runtime';
 
 export interface SignedEnrichmentMessage { jobId: string; signature: string }
 const validSecret = (secret: string | undefined): secret is string => typeof secret === 'string' && secret.length >= 32;
@@ -26,7 +27,10 @@ export function createSignedEnrichmentCallback(
   callback: (request: Request) => Promise<Response>,
   config = { enabled: () => process.env.CONTACT_ENRICHMENT_ENABLED === 'true', secret: configuredSecret },
 ) {
-  return async (request: Request) => {
+  return instrumentPrivateHandler({
+    route: '/api/queues/enrich-contact', event: 'contact_enrichment.callback',
+    durationMetric: 'contact_enrichment.callback.duration_ms', provider: 'vercel_queue',
+  }, async (request: Request) => {
     const secret = config.secret();
     if (!config.enabled() || !validSecret(secret)) return new Response(null, {status: 503, headers: {'Retry-After': '60'}});
     const receipt = request.headers.get('ce-vqsreceipthandle');
@@ -39,5 +43,5 @@ export function createSignedEnrichmentCallback(
     headers.delete('content-length');
     headers.set('content-type', 'application/json');
     return callback(new Request(request.url, {method: 'POST', headers, body: JSON.stringify(payload)}));
-  };
+  });
 }
