@@ -60,8 +60,9 @@ still use the documented structured-log fallback until plan support is verified.
 ## Repository checks
 
 `.github/workflows/security.yml` runs on PRs, main pushes, weekly, and manually.
-It uses a clean npm install, type/lint checks, isolated security/onboarding/browser/
-profile/directory/scraper tests, demo Firestore emulator rules tests, and an audit
+It uses Node 24 (matching the Firebase SDK minimum of Node 24.12), a clean npm
+install, type/lint checks, isolated security/onboarding/browser/profile/directory/
+scraper tests, demo Firestore emulator rules tests, and an audit
 of shipped dependencies at high severity. Browser/provider fixtures require no
 production Firebase credentials and spend no provider credits. Gitleaks scans
 history with redacted findings and without publishing finding artifacts/comments.
