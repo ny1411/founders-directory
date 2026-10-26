@@ -114,9 +114,16 @@ already-cached CDN responses.
 
 The directory API retains canonical URLs, the 8,192-character URL and 4,096-
 character query limits, 100-character search, ten values per facet and twenty
-selections overall. Unknown keys, malformed scalar values and invalid facets
-are rejected before quota/index work; noncanonical equivalents redirect before
-any database work. Page input is now independently bounded to 100,000 rather
+selections overall. Both raw and normalized search lengths and the final encoded
+canonical query are bounded, so case-fold expansion or escaping cannot generate
+a redirect target that the same parser rejects. Unknown keys, malformed scalar
+values and invalid static facets are rejected before quota/index work;
+noncanonical equivalents redirect before any database work. Dynamic batch/VC
+selections must all exist with their exact stored spelling in the compact index.
+Their membership check runs after quota admission and index loading, before
+filtering or company-card reads. Unknown or mixed known/unknown selections return
+an uncacheable 400 rather than silently dropping filters and caching the full
+directory under attacker-invented labels. Page input is independently bounded to 100,000 rather
 than tied to the removed 5,000-company snapshot cap. Pages beyond actual results
 still clamp to the final page.
 

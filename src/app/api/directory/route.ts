@@ -1,5 +1,5 @@
 import { buildDirectoryPage, getDirectoryIndex } from "@/lib/directory-query"
-import { parseDirectoryRequest } from "@/lib/directory-request"
+import { hasKnownDirectoryFacets, parseDirectoryRequest } from "@/lib/directory-request"
 import { adminDb } from "@/lib/firebase-admin"
 import { requestIp, reserveQuota } from "@/lib/rate-limit"
 import { instrumentApiRoute } from "@/lib/observability-runtime"
@@ -41,6 +41,13 @@ async function directoryGet(request: Request) {
       })
     }
     const index = await getDirectoryIndex()
+    // The UI parser deliberately ignores unavailable options. Do not let that
+    // turn arbitrary batch/VC labels into full-directory CDN cache entries.
+    if (!hasKnownDirectoryFacets(query.params, index)) {
+      return Response.json({ error: "Invalid batch or VC selection." }, {
+        status: 400, headers: { "Cache-Control": "no-store" },
+      })
+    }
     const result = await buildDirectoryPage(index, query.params)
     return Response.json(result, {
       headers: {

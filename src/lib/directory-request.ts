@@ -35,6 +35,9 @@ export function parseDirectoryRequest(search: string): DirectoryRequestResult {
   const rawSearch = input.get("q") ?? ""
   if (rawSearch.length > MAX_DIRECTORY_SEARCH_LENGTH) return invalid("Search is too long.")
   const q = normalizeCompanySearch(rawSearch)
+  // Unicode case folding can expand a bounded input (for example, İ → i̇).
+  // Every accepted canonical query must remain valid without later truncation.
+  if (q.length > MAX_DIRECTORY_SEARCH_LENGTH) return invalid("Search is too long.")
   if (q) { params.q = q; output.set("q", q) }
 
   const sort = input.get("sort") ?? "asc"
@@ -73,7 +76,18 @@ export function parseDirectoryRequest(search: string): DirectoryRequestResult {
   }
   if (rawPage !== "1") { params.page = rawPage; output.set("page", rawPage) }
 
-  return { ok: true, params, canonicalQuery: output.toString() }
+  const canonicalQuery = output.toString()
+  // URL.search includes its leading '?' on the following request.
+  if (canonicalQuery.length >= MAX_DIRECTORY_QUERY_LENGTH) return invalid("Query is too long.")
+  return { ok: true, params, canonicalQuery }
+}
+
+/** Dynamic labels require the compact index, but must precede card selection. */
+export function hasKnownDirectoryFacets(params: SearchParams, options: { batches: readonly string[]; vcs: readonly string[] }): boolean {
+  return ([['batch', options.batches], ['vc', options.vcs]] as const).every(([key, allowed]) => {
+    const selected = params[key]
+    return (typeof selected === "string" ? [selected] : selected ?? []).every(value => allowed.includes(value))
+  })
 }
 
 function invalid(error: string): DirectoryRequestResult { return { ok: false, error } }
