@@ -66,6 +66,68 @@ test('account switch/signout clears recovery and late old-account callbacks cann
   } finally { Reflect.deleteProperty(globalThis,'localStorage');Reflect.deleteProperty(globalThis,'sessionStorage'); }
 });
 
+test('failed storage cleanup or owner updates disable recovery until a successful auth transition', () => {
+  for (const failure of ['local-enumeration', 'local-removal', 'session-removal', 'session-update'] as const) {
+    let failing = false;
+    class LocalStorage extends MemoryStorage {
+      get length() {
+        if (failing && failure === 'local-enumeration') throw new Error('Storage unavailable');
+        return super.length;
+      }
+      removeItem(key: string) {
+        if (failing && failure === 'local-removal') throw new Error('Storage unavailable');
+        super.removeItem(key);
+      }
+    }
+    class SessionStorage extends MemoryStorage {
+      removeItem(key: string) {
+        if (failing && failure === 'session-removal') throw new Error('Storage unavailable');
+        super.removeItem(key);
+      }
+      setItem(key: string, value: string) {
+        if (failing && failure === 'session-update') throw new Error('Storage unavailable');
+        super.setItem(key, value);
+      }
+    }
+    const local = new LocalStorage();
+    const session = new SessionStorage();
+    Object.defineProperty(globalThis, 'localStorage', { value: local, configurable: true });
+    Object.defineProperty(globalThis, 'sessionStorage', { value: session, configurable: true });
+    const aliceKey = 'onboarding-draft:v1:alice';
+    const bobKey = 'onboarding-draft:v1:bob';
+    try {
+      setRecoveryOwner('alice');
+      writeRecovery('alice', aliceKey, 'private Alice draft');
+      failing = true;
+      setRecoveryOwner('bob');
+      failing = false;
+      // Even when storage immediately becomes usable again, old owner markers
+      // and late callbacks cannot restore access without a fresh auth callback.
+      assert.equal(readRecovery('alice', aliceKey), null, failure);
+      const before = [...local.values];
+      writeRecovery('alice', aliceKey, 'late Alice draft');
+      writeRecovery('bob', bobKey, 'unconfirmed Bob draft');
+      assert.deepEqual([...local.values], before, failure);
+      setRecoveryOwner('bob');
+      assert.equal(local.getItem(aliceKey), null, failure);
+      writeRecovery('bob', bobKey, 'private Bob draft');
+      assert.equal(readRecovery('bob', bobKey), 'private Bob draft', failure);
+      failing = true;
+      setRecoveryOwner(null);
+      failing = false;
+      assert.equal(readRecovery('bob', bobKey), null, failure);
+      const afterSignout = [...local.values];
+      writeRecovery('bob', bobKey, 'late signout draft');
+      assert.deepEqual([...local.values], afterSignout, failure);
+    } finally {
+      failing = false;
+      setRecoveryOwner(null);
+      Reflect.deleteProperty(globalThis, 'localStorage');
+      Reflect.deleteProperty(globalThis, 'sessionStorage');
+    }
+  }
+});
+
 test('superseded resumes get timestamp TTL; reactivating old content clears TTL and remains owner-scoped', async()=>{
   const f=fixture('owner');
   await f.post({action:'select_intent',intent:'job',stage:'actively_looking'});

@@ -12,7 +12,11 @@ Onboarding recovery stores changed answers and only a changed summary under a
 versioned user key for at most 24 hours. Auth callbacks clear drafts belonging
 to other accounts, and sign-out clears all onboarding drafts. A session owner
 gate prevents late old-account requests from recreating a cleared draft.
-Storage failures disable recovery rather than bypassing the owner gate. Browser
+Auth transitions revoke the in-memory recovery owner before touching either
+storage area. If enumeration, cleanup or the new session marker fails, recovery
+stays disabled until a later successful auth callback, even if an old session
+marker remains readable. Failed cleanup can leave a draft physically stored;
+the next successful transition retries cleanup. Browser
 storage is a recovery aid, not a secure vault: shared-device users should sign
 out, and scripts running on the same origin can access it. Resume editor drafts
 stay in component memory. Account-keyed profile/message components unmount old
