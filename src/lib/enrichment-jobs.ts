@@ -71,7 +71,17 @@ export const enrichmentHandlers = createEnrichmentHandlers({
 export const processEnrichmentJob = createEnrichmentProcessor({
   enabled: enrichmentEnabled,
   get: async id => (await ref(id).get()).data() as EnrichmentJob | undefined || null,
-  update: async (id, value) => { await ref(id).update(value); },
+  update: (id, value, workerToken) => adminDb.runTransaction(async transaction => {
+    const jobRef = ref(id);
+    const workerLease = adminDb.collection('apiLeases').doc(hashIdentity(`enrichment-job:${id}`));
+    const [job, lease] = await transaction.getAll(jobRef, workerLease);
+    // Slow Firestore/provider work can outlive the delivery lease. Check current
+    // ownership atomically with every write, not just the initial paid claim.
+    if (!job.exists || !['queued', 'submitting', 'polling'].includes(job.data()?.status) ||
+      lease.data()?.token !== workerToken || !(lease.data()?.expiresAt > Date.now())) return false;
+    transaction.update(jobRef, value);
+    return true;
+  }),
   claimSubmission: (id, workerToken) => adminDb.runTransaction(async transaction => {
     const jobRef = ref(id);
     const workerLease = adminDb.collection('apiLeases').doc(hashIdentity(`enrichment-job:${id}`));

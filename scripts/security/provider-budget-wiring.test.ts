@@ -89,13 +89,46 @@ test('production enrichment wiring uses shared budgets and founder-count units',
   assert.equal(await captured!.runPaid(4, async () => {assert.deepEqual(f.units(), [4, 4, 4, 4]); return 'submitted';}), 'submitted');
 });
 
+test('production worker transitions atomically reject expired, replaced and terminal job ownership', async () => {
+  const f = memoryBudgetDb();
+  let captured: Pick<Parameters<typeof createEnrichmentProcessor>[0], 'update'> | undefined;
+  load('../../src/lib/enrichment-jobs.ts', {
+    '@vercel/queue': {}, './firebase-admin': {adminDb: f.db},
+    './enrichment-handler': {createEnrichmentHandlers: () => ({})}, './rate-limit': {hashIdentity}, './saleshandy': {},
+    './enrichment-worker': {createEnrichmentProcessor: (deps: typeof captured) => {captured = deps;}},
+    './enrichment-callback': {}, './provider-budget': {},
+  });
+  const jobId = 'a'.repeat(64);
+  const jobPath = `contactEnrichmentJobs/${jobId}`;
+  const leasePath = `apiLeases/${hashIdentity(`enrichment-job:${jobId}`)}`;
+  const update = (value: Partial<EnrichmentJob>, token = 'owner') => captured!.update(jobId, value, token);
+  f.values.set(leasePath, {token: 'owner', expiresAt: Date.now() + 90_000});
+  assert.equal(await update({status: 'completed'}), false, 'missing job is never recreated');
+  f.values.set(jobPath, {status: 'polling', polls: 4});
+  assert.equal(await update({polls: 0}, 'previous-owner'), false);
+  f.values.set(leasePath, {token: 'owner', expiresAt: Date.now() - 1});
+  assert.equal(await update({status: 'completed'}), false, 'an expired token cannot commit even before replacement');
+  assert.deepEqual(f.values.get(jobPath), {status: 'polling', polls: 4});
+  f.values.set(leasePath, {token: 'owner', expiresAt: Date.now() + 90_000});
+  assert.equal(await update({polls: 5}), true);
+  assert.equal(f.values.get(jobPath)?.polls, 5);
+  const committed = await Promise.all([update({status: 'completed', results: []}), update({status: 'failed', reason: 'POLLING_TIMEOUT'})]);
+  assert.deepEqual(committed, [true, false], 'a terminal result is immutable under a duplicate transition');
+  assert.equal(f.values.get(jobPath)?.status, 'completed');
+  for (const status of ['failed', 'invalid']) {
+    f.values.set(jobPath, {status});
+    assert.equal(await update({status: 'polling'}), false);
+    assert.deepEqual(f.values.get(jobPath), {status});
+  }
+});
+
 test('real worker + durable budget reject before POST, while retries and GET polls never reserve again', async () => {
   const f = memoryBudgetDb(); let limits = providerBudgetConfig({}); limits.project.hourly = 1;
   const job = {uid: 'owner', founderIds: ['one', 'two'], companySlug: 'company', status: 'queued', createdAt: Date.now(), expiresAt: Date.now() + 900_000, userLease: 'token'} as EnrichmentJob;
   const states: string[] = []; const methods: string[] = []; let reservations = 0; const now = Date.now();
   const worker = createEnrichmentProcessor({
     enabled: () => true, get: async () => ({...job}),
-    update: async (_id, value) => {states.push(value.status || 'poll'); Object.assign(job, value);},
+    update: async (_id, value) => {states.push(value.status || 'poll'); Object.assign(job, value); return true;},
     claimSubmission: async () => {if(job.status !== 'queued') return false; job.status = 'submitting'; return true;},
     targets: async () => ({company: {website: 'https://company.example'} as Company, founders: [{name: 'One', linkedinUrl: 'https://linkedin.com/in/one'} as Founder]}),
     acquire: async () => 'lock', release: async () => {}, enqueue: async () => {},
@@ -116,7 +149,7 @@ test('delayed stale worker cannot claim or spend after replacement delivery subm
   const target = {company: {website: 'https://company.example'} as Company, founders: [{name: 'One'} as Founder]};
   const heldTargets = new Promise<void>(resolve => {resolveTargets = resolve;});
   const worker = createEnrichmentProcessor({
-    enabled: () => true, get: async () => ({...job}), update: async (_id, value) => {Object.assign(job, value);},
+    enabled: () => true, get: async () => ({...job}), update: async (_id, value) => {Object.assign(job, value); return true;},
     targets: async () => {if(++targetReads === 1) await heldTargets; return target;},
     acquire: async () => currentOwner, release: async () => {}, enqueue: async () => {},
     claimSubmission: async (_id, owner) => {if(owner !== currentOwner || job.status !== 'queued') return false; job.status = 'submitting'; return true;},
@@ -126,7 +159,7 @@ test('delayed stale worker cannot claim or spend after replacement delivery subm
   const first = worker('a'.repeat(64));
   while(!targetReads) await new Promise<void>(resolve => setImmediate(resolve));
   currentOwner = 'replacement'; await worker('a'.repeat(64));
-  resolveTargets(); await first;
+  resolveTargets(); await assert.rejects(first, /^Error: JOB_OWNERSHIP_LOST$/);
   assert.equal(paid, 1); assert.equal(reservations, 1); assert.equal(job.status, 'polling');
   assert.deepEqual(f.units(), [1, 1, 1, 1]);
 });
@@ -136,7 +169,7 @@ test('global reservation delayed past the worker lease never starts a paid POST'
   const f = memoryBudgetDb(); let now = Date.now(); let paid = 0;
   const job = {uid: 'owner', founderIds: ['one'], companySlug: 'company', status: 'queued', createdAt: now, expiresAt: now + 900_000, userLease: 'user-token'} as EnrichmentJob;
   const worker = createEnrichmentProcessor({
-    enabled: () => true, clock: () => now, get: async () => ({...job}), update: async (_id, value) => {Object.assign(job, value);},
+    enabled: () => true, clock: () => now, get: async () => ({...job}), update: async (_id, value) => {Object.assign(job, value); return true;},
     targets: async () => ({company: {} as Company, founders: [{name: 'One'} as Founder]}),
     acquire: async () => 'owner', release: async () => {}, enqueue: async () => {},
     claimSubmission: async () => {job.status = 'submitting'; return true;},
