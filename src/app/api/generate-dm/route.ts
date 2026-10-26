@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
-import { createMessageHandler } from "@/lib/onboarding/messages";
+import { createMessageHandler, MESSAGE_GENERATION_LEASE_MS, MESSAGE_GENERATION_TIMEOUT_MS } from "@/lib/onboarding/messages";
 import { OnboardingStore } from "@/lib/onboarding/store";
 import type { Company, Founder } from "@/lib/types";
 import {
@@ -49,7 +49,7 @@ const generateMessage = createMessageHandler({
             { name: "ip-day", limit: 60, windowMs: 86_400_000, subject: "ip" },
           ],
     ),
-  acquire: (key) => acquireLease(adminDb, `generate-dm:${key}`, 120_000),
+  acquire: (key) => acquireLease(adminDb, `generate-dm:${key}`, MESSAGE_GENERATION_LEASE_MS),
   release: (key, token) => releaseLease(adminDb, `generate-dm:${key}`, token),
   verifyToken: (token, revoked) => adminAuth.verifyIdToken(token, revoked),
   load: (uid) => store.load(uid),
@@ -91,8 +91,10 @@ const generateMessage = createMessageHandler({
     if (typeof value.expiresAt !== "string" || !Number.isFinite(Date.parse(value.expiresAt))) throw new Error("Invalid message expiry");
     await adminDb.collection("generatedMessages").doc(key).set({ ...value, deleteAfter: new Date(value.expiresAt) });
   },
-  generate: ({ instructions, data }) => withProviderBudget(adminDb, "dm", async () =>
-    (
+  generate: ({ instructions, data }, assertOwnerFresh) => withProviderBudget(adminDb, "dm", async () => {
+    // The durable global budget may have waited beyond this message's lease.
+    assertOwnerFresh();
+    return (
       await new GoogleGenAI({
         apiKey: process.env.GEMINI_API_KEY,
       }).models.generateContent({
@@ -101,10 +103,11 @@ const generateMessage = createMessageHandler({
         config: {
           systemInstruction: instructions,
           maxOutputTokens: 1024,
-          httpOptions: { timeout: 60_000, retryOptions: { attempts: 1 } },
+          httpOptions: { timeout: MESSAGE_GENERATION_TIMEOUT_MS, retryOptions: { attempts: 1 } },
         },
       })
-    ).text),
+    ).text;
+  }),
 });
 
 const protectedPost = createBotProtectedPost({

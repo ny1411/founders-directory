@@ -2,7 +2,8 @@
 
 Gemini resume extraction has one 60-second SDK HTTP attempt, at most 8,192 output
 tokens, and a 256 KiB raw JSON guard before JSON parsing. DM generation has one
-60-second attempt and at most 1,024 output tokens. Existing schema and message
+60-second attempt and at most 1,024 output tokens, plus a 16 KiB UTF-8 output
+guard before storing or returning a generated draft. Existing schema and message
 validation still apply; invalid or truncated responses fail with safe errors.
 Provider budgets continue to reserve before the SDK call and never refund
 ambiguous/failed paid attempts.
@@ -19,6 +20,13 @@ asynchronous Firestore TTL deletion. Before SDK submission, the handler verifies
 that at least the complete SDK timeout remains in the lease, including quota
 storage latency. There is no application Promise.race that releases a Gemini
 lease while an uncancelled generation continues.
+
+DM generation applies the same full-timeout freshness check to its 120-second
+message lease. Lease acquisition, cached-result rechecks, resume reads and user
+quota latency count against ownership. The production route checks again after
+the global budget reservation and immediately before Gemini submission, so slow
+storage cannot let a replaced owner start another paid request. Rejection returns
+a safe 503 with Retry-After and still releases the token-fenced message lease.
 
 Saleshandy uses one ten-second deadline covering fetch headers and streamed
 response data. Decoded response bytes are capped at 256 KiB regardless of
