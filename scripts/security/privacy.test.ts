@@ -13,7 +13,7 @@ test('public founder props use an allowlist excluding contact and newly added pr
   assert.equal(serialized.includes('private'),false);
   assert.equal(serialized.includes('secret'),false);
   const page = readFileSync(new URL('../../src/app/company/[slug]/page.tsx',import.meta.url),'utf8');
-  assert.match(page,/founders: founders.map\(publicFounder\)/);
+  assert.match(page,/founders: founders(?:\?\.|\.)map\(publicFounder\)/);
   assert.doesNotMatch(page,/email=|phone=/);
 });
 

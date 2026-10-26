@@ -14,21 +14,22 @@ function fakeCollection<T extends { id: string }>(documents: T[]) {
   const collection = {
     where(field: keyof T, operator: string, value: unknown) {
       assert.equal(operator, "==")
-      return {
-        limit(count: number) {
-          assert.equal(count, 1)
-          return { get: async () => {
-            reads++
-            const matches = documents.filter(document => document[field] === value).slice(0, count)
-            return { empty: matches.length === 0, docs: matches.map(document => ({ id: document.id, data: () => document })) }
-          } }
-        },
-        get: async () => {
+      let maximum: number | undefined
+      let selected: string[] | undefined
+      const query = {
+        limit(count: number) { maximum = count; return query },
+        select(...fields: string[]) { selected = fields; return query },
+        async get() {
+          assert.ok(maximum && selected, "All public queries must apply a read limit and field projection")
+          const fields = selected
           reads++
-          const matches = documents.filter(document => document[field] === value)
-          return { docs: matches.map(document => ({ id: document.id, data: () => document })) }
+          const matches = documents.filter(document => document[field] === value).slice(0, maximum)
+          return { empty: !matches.length, docs: matches.map(document => ({ id: document.id,
+            data: () => Object.fromEntries(fields.filter(key => key in document).map(key => [key, document[key as keyof T]])),
+          })) }
         },
       }
+      return query
     },
   }
   return { collection: collection as unknown as CollectionReference, reads: () => reads }
@@ -42,7 +43,7 @@ test("valid company and founders load from bounded queries", async () => {
     id: "company-1", slug: "acme", name: "Acme",
   })
   assert.deepEqual(await loadFoundersByCompanyId(founders.collection, "company-1"), [
-    { id: "founder-1", companyId: "company-1", name: "A" },
+    { id: "founder-1", companyId: "company-1", name: "A", role: null, avatarUrl: null, twitterUrl: null, linkedinUrl: null, bio: null },
   ])
   assert.equal(companies.reads(), 1)
   assert.equal(founders.reads(), 1)
