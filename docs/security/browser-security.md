@@ -43,7 +43,12 @@ volume becomes excessive; do not interpret received report counts as unique user
 
 The shared runtime records bounded normalized route, outcome, duration and HTTP
 status for auth sync, onboarding reads/writes, profile aliases, founder contact,
-and the existing generation/enrichment routes. Company submission records an
+and the existing generation/enrichment routes. Enrichment job polling and signed
+Queue callbacks also record finite status/callback events, including signature
+denials, feature-unavailable responses and SDK errors. Callback responses use
+`private, no-store` and preserve SDK exceptions for Queue retries. Accepted-job
+events retain only batch size and quota outcome; job IDs and Queue receipts are
+excluded from logs. Company submission records an
 outcome, including authentication/validation/quota failures; Next redirects count
 as success. Private API success and error responses use `private, no-store`,
 including quota and BotID rejection. Public directory caching is preserved.
@@ -55,8 +60,9 @@ still use the documented structured-log fallback until plan support is verified.
 ## Repository checks
 
 `.github/workflows/security.yml` runs on PRs, main pushes, weekly, and manually.
-It uses a clean npm install, type/lint checks, isolated security/onboarding/browser/
-profile/directory/scraper tests, demo Firestore emulator rules tests, and an audit
+It uses Node 24 (matching the Firebase SDK minimum of Node 24.12), a clean npm
+install, type/lint checks, isolated security/onboarding/browser/profile/directory/
+scraper tests, demo Firestore emulator rules tests, and an audit
 of shipped dependencies at high severity. Browser/provider fixtures require no
 production Firebase credentials and spend no provider credits. Gitleaks scans
 history with redacted findings and without publishing finding artifacts/comments.
