@@ -1,45 +1,31 @@
 import { spawnSync } from 'node:child_process';
-import { projectId, teamSlug } from './firewall-rules.mjs';
+import { projectId, teamId, teamSlug } from './firewall-rules.mjs';
 import { vercelInvocation } from './vercel-cli.mjs';
+import { previewDeployment, previewProbeRule, runPreviewProbe } from './firewall-preview.mjs';
 
-// Eight sequential read-only requests maximum, never a production deployment.
-const deploymentId = process.argv[2];
-const key = process.env.FIREWALL_PROBE_KEY;
-if (!/^dpl_[A-Za-z0-9]+$/.test(deploymentId ?? '') || !key || key.length < 32) {
-  throw new Error('Pass a preview deployment ID and set FIREWALL_PROBE_KEY to the same 32+ character value used in the preview rule.');
+// Metadata/config GETs precede at most eight application requests. No staging,
+// publishing, retries, redirects, paid operations or Production traffic.
+try {
+  const deploymentId = process.argv[2];
+  const key = process.env.FIREWALL_PROBE_KEY;
+  if (process.argv.length !== 3 || !/^dpl_[A-Za-z0-9]+$/.test(deploymentId ?? '')) throw new Error('Pass one Preview deployment ID.');
+  previewProbeRule({ url: 'validation-only.vercel.app' }, key);
+  const { command, prefix } = vercelInvocation();
+  function metadata(path) {
+    const result = spawnSync(command, [...prefix, '--non-interactive', '--scope', teamSlug, 'api', path, '--method', 'GET'], {
+      encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024,
+      env: { ...process.env, VERCEL_TELEMETRY_DISABLED: '1' },
+    });
+    if (result.error || result.status !== 0) throw new Error('Could not verify Vercel metadata; no traffic sent.');
+    try { return JSON.parse(result.stdout); }
+    catch { throw new Error('Invalid Vercel metadata JSON; contents are not echoed and no traffic was sent.'); }
+  }
+  const deployment = previewDeployment(metadata(`/v13/deployments/${deploymentId}?teamId=${teamId}`), deploymentId);
+  const snapshot = metadata(`/v1/security/firewall/config?projectId=${projectId}&teamId=${teamId}`);
+  const result = await runPreviewProbe({ deployment, deploymentId, snapshot, key, bypass: process.env.VERCEL_AUTOMATION_BYPASS_SECRET });
+  console.log(JSON.stringify(result));
+  console.log('Request behavior passed; edge attribution remains unverified. Confirm the reported rule ID in Firewall traffic and absence of Function invocations for blocked requests.');
+} catch (error) {
+  console.error(error instanceof Error ? error.message : 'Preview probe failed.');
+  process.exitCode = 1;
 }
-const { command, prefix } = vercelInvocation();
-const inspected = spawnSync(command, [...prefix, '--non-interactive', '--scope', teamSlug, 'api', `/v13/deployments/${deploymentId}`, '--method', 'GET'], {
-  encoding: 'utf8', timeout: 30_000, env: { ...process.env, VERCEL_TELEMETRY_DISABLED: '1' },
-});
-if (inspected.error) throw inspected.error;
-if (inspected.status !== 0) throw new Error('Could not verify deployment metadata; no traffic sent.');
-const raw = JSON.parse(inspected.stdout);
-const deployment = raw.result ?? raw;
-if (deployment.id !== deploymentId || deployment.projectId !== projectId ||
-    deployment.target === 'production' || deployment.readyState !== 'READY' ||
-    !/^[a-z0-9-]+\.vercel\.app$/.test(deployment.url ?? '')) {
-  throw new Error('Deployment must be READY, belong to founders-directory, and have a non-production target; no traffic sent.');
-}
-const origin = `https://${deployment.url}`;
-const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
-const accessHeaders = bypass ? { 'x-vercel-protection-bypass': bypass } : {};
-const headers = { ...accessHeaders, 'x-fd-firewall-probe': key };
-// The optional Vercel bypass only reaches this verified Preview deployment.
-// Never print it or use it against Production. It does not bypass BotID.
-async function request(path, method = 'GET', marked = true) {
-  const response = await fetch(`${origin}${path}`, { method, headers: marked ? headers : accessHeaders, redirect: 'manual', signal: AbortSignal.timeout(10_000) });
-  await response.body?.cancel();
-  console.log(`${method} ${path}: ${response.status}`);
-  return response.status;
-}
-for (let index = 0; index < 5; index++) {
-  const status = await request('/');
-  if (index < 2 && (status < 200 || status >= 300)) throw new Error('Below-threshold request failed. Check Preview protection, stale counters, and application health.');
-  if (index === 4 && status !== 429) throw new Error('No 429 above threshold. Verify published preview rule and rule-specific Firewall traffic.');
-}
-for (const [path, method, marked] of [['/robots.txt', 'GET', true], ['/', 'HEAD', true], ['/', 'GET', false]]) {
-  const status = await request(path, method, marked);
-  if (status === 429) throw new Error('Unrelated path, method, or unmarked navigation was rate limited.');
-}
-console.log('Bounded preview checks passed. Confirm the matching rule ID in Firewall traffic and absence of Function invocations for blocked requests.');
