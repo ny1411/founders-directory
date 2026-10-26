@@ -1,29 +1,14 @@
-import { MetadataRoute } from 'next'
-import { adminDb } from "@/lib/firebase-admin"
+import type { MetadataRoute } from 'next'
+import { getDirectoryIndex } from '@/lib/directory-query'
+import { buildSitemap } from '@/lib/sitemap'
+
+// Cache successful metadata and retry temporary root-only outage responses.
+export const revalidate = 300
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = new URL(
     process.env.NEXT_PUBLIC_APP_URL || 'https://foundersdirectory.com'
   );
 
-  const companiesSnapshot = await adminDb.collection("companies").get();
-  const companyUrls = companiesSnapshot.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      url: new URL(`/company/${data.slug}`, baseUrl).toString(),
-      lastModified: new Date(),
-      changeFrequency: 'weekly' as const,
-      priority: 0.8,
-    };
-  });
-
-  return [
-    {
-      url: new URL('/', baseUrl).toString(),
-      lastModified: new Date(),
-      changeFrequency: 'daily',
-      priority: 1,
-    },
-    ...companyUrls,
-  ]
+  return buildSitemap(baseUrl, getDirectoryIndex)
 }

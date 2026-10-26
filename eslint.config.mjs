@@ -1,15 +1,9 @@
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { FlatCompat } from "@eslint/eslintrc";
-
-// Next 15's supported ESLint presets use the legacy format. Adapt them to
-// ESLint 9 rather than loading presets for a different Next major version.
-const compat = new FlatCompat({
-  baseDirectory: dirname(fileURLToPath(import.meta.url)),
-});
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTypescript from "eslint-config-next/typescript";
 
 const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  ...nextVitals,
+  ...nextTypescript,
   // Override default ignores of eslint-config-next.
   { ignores: [
     // Default ignores of eslint-config-next:

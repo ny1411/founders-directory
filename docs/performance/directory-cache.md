@@ -152,3 +152,21 @@ On staging, backfill the index, deploy, and record these bounded scenarios:
 Production deployment, backfill publication and live read-count verification are
 separate rollout steps; passing local fixtures does not establish deployed cache
 behavior.
+
+## Sitemap metadata
+
+`/sitemap.xml` reuses the published directory index instead of scanning every
+company document during a build. A cold index load reads the manifest and sixteen
+bounded shards; warm loads share the existing directory cache. Sitemap generation
+does not load company cards or founders. Slugs are validated and deduplicated, and
+company modification dates are omitted because the compact index has no source
+update timestamp.
+
+If index storage is unavailable, the sitemap contains the public homepage and
+emits the fixed `sitemap.index_unavailable` warning without database details.
+The route revalidates every five minutes so recovery restores company URLs;
+this fallback is degraded metadata, not evidence that Firestore is healthy.
+Investigate recurring warnings and verify a subsequent sitemap includes company
+URLs after the backend recovers. `sitemap.partition_required` means the index
+exceeds the 50,000-URL protocol limit: split the sitemap before treating metadata
+coverage as complete. No unbounded scan or quota retry is used as a fallback.

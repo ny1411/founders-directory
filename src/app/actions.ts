@@ -58,8 +58,8 @@ async function createCompanyAction(formData: FormData, idToken: string): Promise
     return { error: 'Could not save the company. Please try again.', code: 'SAVE_FAILED' }
   }
 
-  revalidateTag(DIRECTORY_CACHE_TAG)
-  revalidateTag(companyCacheTag(slug))
+  revalidateTag(DIRECTORY_CACHE_TAG, { expire: 0 })
+  revalidateTag(companyCacheTag(slug), { expire: 0 })
   revalidatePath(`/company/${slug}`)
   revalidatePath('/')
   redirect(`/company/${slug}`)
