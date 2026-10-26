@@ -72,6 +72,110 @@ Enable every supported alert in Vercel, route it to the recorded monitored desti
 
 Tune these thresholds after representative production traffic. Alerts must have an owner and a specific next action; avoid notifications for every small change.
 
+## Evaluate an aggregate snapshot locally
+
+`scripts/monitoring/usage-anomaly.mjs` turns the thresholds above into an
+executable investigation aid. It runs with the repository's Node 24 runtime,
+makes no network requests, changes no settings, and sends no notifications.
+Prepare a **local, uncommitted aggregate** snapshot from the verified project's
+Usage, request/cache, Firewall and Web Analytics views. Do not pass raw exports,
+logs, IPs, JA4 values, user agents, tokens or private content. Unknown schema
+fields and raw dynamic paths are rejected without echoing them.
+
+```bash
+node scripts/monitoring/usage-anomaly.mjs /tmp/usage-snapshot.json
+node --test scripts/monitoring/usage-anomaly.test.mjs
+```
+
+The JSON schema is illustrated below. Replace the example timestamps and counts
+with actual observations before running it; stale examples fail closed.
+`current` is mandatory. Every optional signal may be `null` or omitted when its
+source is unavailable; the report then lists that gap explicitly. Empty cache
+coverage also remains incomplete. Missing evidence never becomes an all-clear.
+
+```json
+{
+  "schemaVersion": 1,
+  "projectId": "prj_oxUZTfhN9aAIwtcABk8dcX00nFvt",
+  "teamId": "team_uk1Ii5k2P5wcgjeFoxW9ojfC",
+  "environment": "production",
+  "capturedAt": "2026-10-26T05:01:00Z",
+  "windowStart": "2026-10-26T04:00:00Z",
+  "windowEnd": "2026-10-26T05:00:00Z",
+  "current": {"requests": 1000, "functionInvocations": 100, "functionErrors": 0, "homepageRequests": 500},
+  "baseline": {
+    "windowStart": "2026-10-25T04:00:00Z",
+    "windowEnd": "2026-10-25T05:00:00Z",
+    "requests": 1000, "functionInvocations": 100, "homepageRequests": 500
+  },
+  "cpu": {
+    "scope": "team_all_environments",
+    "usedMilliseconds": 100, "allowanceMilliseconds": 1000,
+    "periodStart": "2026-10-01T00:00:00Z", "periodEnd": "2026-11-01T00:00:00Z"
+  },
+  "publicCache": [
+    {"route": "/", "requests": 500, "hits": 450},
+    {"route": "/company/[slug]", "requests": 200, "hits": 180},
+    {"route": "/api/directory", "requests": 100, "hits": 90}
+  ],
+  "analytics": {"pageviews": 1000, "visitors": 200, "topCohortPageviews": 300},
+  "firewall": {"requests": 1000, "mitigated": 0},
+  "largestClientHomepageRequestsTenMinutes": 20,
+  "topRoute": {"route": "/", "requests": 500}
+}
+```
+
+Use one closed **60-minute window**, one environment and one project for request,
+Function, cache, Firewall and analytics counts. Finish collection and evaluation
+within 15 minutes of its end. `baseline` must be another 60-minute window at the
+same UTC hour, 1–28 days earlier, for the same sources/environment/project; choose
+representative traffic and record collection provenance separately. Traffic and
+Function counts remain independent: do not derive Function work by subtracting
+cache hits or mitigations. Include only 5xx failures in `functionErrors`.
+`publicCache` contains `HIT` counts for the three listed public routes. Normalize
+company slugs and other dynamic routes using the application's registered route
+vocabulary before supplying `topRoute`. `topCohortPageviews` and the largest-client
+count contain counts only, never the cohort/client identifiers. The client count
+is the largest observed homepage count in any 10-minute interval within the hour.
+
+CPU is a separate monthly allowance signal. Both numbers must use milliseconds,
+the same allowance period, and the declared scope: `team_all_environments` or
+`project_all_environments`. Use team totals for a shared team allowance; comparing
+one project's consumption against a shared allowance would miss other projects'
+usage. Do not invent a project allowance. Set `cpu` to `null` if usage, allowance,
+units or scope cannot be established. The report exposes `cpuScope` so that this
+signal cannot be mistaken for the selected environment's CPU attribution.
+
+The evaluator emits fixed signal/action codes and only registered routes. CPU
+selects the highest crossed 50/75/90% tier. Traffic growth requires more than 5×
+baseline **and at least 100 current observations**; a zero baseline warns only at
+that floor, while zero-over-zero stays quiet. Error warnings require at least
+100 invocations, five errors and a 5% error rate. Cache warnings require at least
+100 observations and less than 80% hits. Analytics ratio warnings require at least
+100 pageviews and more than 20 pageviews per visitor (including zero visitors).
+Route/cohort concentration above 80% is actionable only alongside elevated
+traffic. Firewall mitigation share above 80% requires at least 100 requests; it
+prompts review for abuse or harmed users, without claiming origin work. The
+largest-client warning begins above 60 homepage requests per 10 minutes.
+These are initial investigation thresholds, defined in the exported `thresholds`
+object; tune them through a reviewed code change after observing normal traffic.
+
+| Exit | Meaning | Operator action |
+| --- | --- | --- |
+| `0` | Complete supplied evidence crossed no threshold | Continue the assigned watch; this is no proof of health or alert delivery |
+| `1` | One or more findings, possibly with evidence gaps | Follow the fixed action codes and the Detect/Contain procedure |
+| `2` | Invalid/stale/wrong-scope snapshot or unreadable input | Repair collection; no assessment was established |
+| `3` | No finding, but one or more sources unavailable | Obtain the missing evidence; do not treat as healthy |
+
+Only regular files of at most 64 KiB are accepted. Reads remain bounded if a file
+grows; FIFOs/devices are rejected without waiting for a writer. Errors do not
+print file paths or input values. An operator or an explicitly configured external
+monitor must collect fresh data and run this tool. It does **not** schedule
+collection, prove Vercel ingestion, continuously monitor traffic, or establish
+notification delivery. Supported platform alerts, recipients, a tested delivery,
+saved views, Preview simulation, the operator exercise and the 24-hour watch
+remain required before closing #41.
+
 ## Dashboards and saved queries
 
 Create one saved incident dashboard for Production and an equivalent Preview view. Save direct URLs in the ownership table or the incident ticket. Query syntax and fields depend on the enabled Vercel product and plan; inspect schemas before copying a command.
