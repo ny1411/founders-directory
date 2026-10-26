@@ -1,10 +1,12 @@
 import assert from "node:assert/strict"
-import type { IncomingMessage } from "node:http"
-import { before, mock, test } from "node:test"
+import { createServer, type IncomingMessage } from "node:http"
+import { once } from "node:events"
+import { before, test } from "node:test"
 import { PHASE_PRODUCTION_BUILD } from "next/constants"
 import loadConfig from "next/dist/server/config"
 import type { NextConfigComplete } from "next/dist/server/config-shared"
-import { ImageOptimizerCache, fetchExternalImage, getSharp, optimizeImage } from "next/dist/server/image-optimizer"
+import { ImageOptimizerCache, fetchExternalImage } from "next/dist/server/image-optimizer"
+import { getSharp, optimizeImage } from "next/dist/server/image-optimizer/transform"
 import nextConfig from "../../next.config"
 import { IMAGE_CONFIG, IMAGE_DECODER_CONFIG } from "../../src/lib/image-policy"
 import { normalizeImageUrl } from "../../src/lib/image-url"
@@ -108,22 +110,28 @@ test("scraper ingestion drops unapproved page images and retains an approved lis
 })
 
 test("the native fetcher enforces the configured cap against actual streamed bytes", async () => {
-  const fetch = mock.method(globalThis, "fetch", async () => new Response(new ReadableStream({
-    start(controller) {
-      // No Content-Length is needed for the actual-body limit to reject this.
-      controller.enqueue(new Uint8Array(IMAGE_CONFIG.maximumResponseBody))
-      controller.enqueue(new Uint8Array(1))
-      controller.close()
-    },
-  })))
+  // Next 16 uses a pinned native HTTP client rather than global fetch. Exercise
+  // its real stream reader against an isolated local server, with no live CDN.
+  const server = createServer((_request, response) => {
+    response.write(Buffer.alloc(IMAGE_CONFIG.maximumResponseBody))
+    response.end(Buffer.alloc(1))
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
   try {
-    await assert.rejects(fetchExternalImage(logo, IMAGE_CONFIG.maximumResponseBody),
+    // Local IP access is enabled only for this isolated transport fixture.
+    await assert.rejects(fetchExternalImage(`http://127.0.0.1:${address.port}/image`, true, IMAGE_CONFIG.maximumResponseBody),
       (error: unknown) => error instanceof Error && "statusCode" in error && error.statusCode === 413)
-  } finally { fetch.mock.restore() }
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  }
 })
 
 test("the native decoder refuses pixel expansion beyond the configured budget", async () => {
-  const buffer = await getSharp(2)({ create: { width: 4001, height: 4000, channels: 3, background: "white" } }).png().toBuffer()
+  const buffer = await getSharp(2, false)({ create: { width: 4001, height: 4000, channels: 3, background: "white" } }).png().toBuffer()
   await assert.rejects(optimizeImage({ buffer, contentType: "image/png", width: 64, quality: 75,
     concurrency: IMAGE_DECODER_CONFIG.imgOptConcurrency,
     limitInputPixels: IMAGE_DECODER_CONFIG.imgOptMaxInputPixels,

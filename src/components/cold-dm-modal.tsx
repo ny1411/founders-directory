@@ -38,6 +38,9 @@ export function ColdDmModal({ founderId, founderName, companySlug, twitterUrl, l
   const enrichmentRequestRef = useRef<{founderId: string; key: string} | null>(null);
   const enrichmentAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
+    // Clear private state when identity/target changes; delaying this reset can
+    // retain the previous account's contact or generated message in the dialog.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalEmail(null);
     setDmText('');
     setEnriching(false);

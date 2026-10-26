@@ -103,10 +103,10 @@ test('Server Action transport coverage stays conditional on action metadata and 
   assert.equal(args.filter(arg => arg === '--or').length, 1);
   const conditions = args.flatMap((arg, index) => arg === '--condition' ? [JSON.parse(args[index + 1])] : []);
   assert.deepEqual(conditions, rule.conditionGroup.flatMap(group => group.conditions));
-  // Next 15 imported actions submit to the current canonical URL, not a
+  // Imported actions submit to the current canonical URL, not a
   // dedicated API endpoint. Guard this against framework upgrades.
   const transport = readFileSync(new URL('../../node_modules/next/dist/client/components/router-reducer/reducers/server-action-reducer.js', import.meta.url), 'utf8');
-  assert.match(transport, /fetch\(state\.canonicalUrl/);
+  assert.match(transport, /_fetch\.fetch\)\(state\.canonicalUrl,\s*\{\s*method: 'POST'/);
   assert.match(transport, /\[_approuterheaders\.ACTION_HEADER\]: actionId/);
 });
 

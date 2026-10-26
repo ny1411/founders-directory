@@ -1,10 +1,11 @@
 import { Directory } from "@/components/directory"
 import { JsonLd } from "@/components/json-ld"
 import { buildInitialDirectoryData, getDirectoryIndex } from "@/lib/directory-query"
+import type { DirectoryInitialData } from "@/lib/directory-types"
 import { Suspense } from "react"
 
 export const dynamic = "force-static"
-export const revalidate = 3600
+export const revalidate = 300
 
 const jsonLd = {
   "@context": "https://schema.org",
@@ -35,8 +36,16 @@ const jsonLd = {
 }
 
 export default async function Home() {
-  const index = await getDirectoryIndex()
-  const initialData = await buildInitialDirectoryData(index)
+  let initialData: DirectoryInitialData
+  try {
+    const index = await getDirectoryIndex()
+    initialData = await buildInitialDirectoryData(index)
+  } catch {
+    // Keep builds and the cached public route available during backend outages.
+    // Never publish an empty directory or expose database exception details.
+    console.warn(JSON.stringify({ event: "directory.home_unavailable" }))
+    return <DirectoryUnavailable />
+  }
 
   return (
     <div className="flex flex-col gap-16 pb-16">
@@ -45,6 +54,24 @@ export default async function Home() {
         <Directory initialData={initialData} />
       </Suspense>
     </div>
+  )
+}
+
+function DirectoryUnavailable() {
+  return (
+    <section className="flex flex-col gap-6 max-w-3xl py-16" role="status" aria-labelledby="directory-unavailable-title">
+      <h1 id="directory-unavailable-title" className="font-serif text-5xl md:text-7xl leading-tight text-foreground tracking-tight">
+        Directory temporarily unavailable
+      </h1>
+      <p className="text-xl text-secondary-foreground leading-relaxed font-light">
+        We couldn’t load the company directory. Please try again in a few minutes.
+      </p>
+      {/* A full document reload retries the public route without client prefetch or polling. */}
+      {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+      <a href="/" className="text-sm text-foreground underline underline-offset-4 self-start">
+        Reload directory
+      </a>
+    </section>
   )
 }
 
