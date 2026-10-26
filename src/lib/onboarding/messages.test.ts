@@ -14,6 +14,9 @@ import {
   buildMessageInput,
   createMessageHandler,
   messageKey,
+  MAX_MESSAGE_OUTPUT_BYTES,
+  MESSAGE_GENERATION_LEASE_MS,
+  MESSAGE_GENERATION_TIMEOUT_MS,
 } from "./messages";
 import { INTENTS, type OnboardingState, type UserIntent } from "./types";
 
@@ -300,6 +303,56 @@ test("exhausted DM generation budgets release the lease without paid generation"
   const response = await handler(request("Bearer token"));
   assert.equal(response.status, 429);
   assert.equal(response.headers.get("retry-after"), "600");
+  assert.equal(released, true);
+});
+
+test("slow message lease acquisition or quota checks reject before paid work and release ownership", async (t) => {
+  const f = fixture();
+  await complete(f, "sell_services");
+  const state = await f.state();
+  const initialTime = Date.now();
+  let now = initialTime;
+  t.mock.method(Date, "now", () => now);
+  for (const delayAt of ["acquire", "quota"] as const) {
+    now = initialTime;
+    let released = false;
+    const delay = () => { now += MESSAGE_GENERATION_LEASE_MS - MESSAGE_GENERATION_TIMEOUT_MS; };
+    const handler = createMessageHandler({
+      verifyToken: async () => ({ uid: f.uid }), load: async () => state,
+      getResume: async () => null, getTarget: async () => target, getCached: async () => null,
+      acquire: async () => { if (delayAt === "acquire") delay(); return "owner-token"; },
+      release: async (_key, token) => { assert.equal(token, "owner-token"); released = true; },
+      quota: async (_uid, _request, kind) => {
+        if (delayAt === "quota" && kind === "generation") delay();
+        return { allowed: true, retryAfterSeconds: 1 };
+      },
+      generate: async () => assert.fail("expired owner must not start paid generation"),
+      save: async () => assert.fail("must not save rejected work"),
+    });
+    const response = await handler(request("Bearer token"));
+    assert.equal(response.status, 503, delayAt);
+    assert.equal(response.headers.get("retry-after"), "30");
+    assert.equal((await response.json()).code, "PROVIDER_LIMIT");
+    assert.equal(released, true);
+  }
+});
+
+test("oversized UTF-8 model output is neither stored nor returned and releases the message lease", async () => {
+  const f = fixture();
+  await complete(f, "sell_services");
+  let released = false;
+  const content = "😀".repeat(MAX_MESSAGE_OUTPUT_BYTES / 4 + 1);
+  assert.ok(content.length < MAX_MESSAGE_OUTPUT_BYTES, "fixture must expose a byte rather than character limit");
+  const handler = createMessageHandler({
+    verifyToken: async () => ({ uid: f.uid }), load: () => f.state(),
+    getResume: async () => null, getTarget: async () => target, getCached: async () => null,
+    acquire: async () => "owner-token", release: async () => { released = true; },
+    generate: async () => content,
+    save: async () => assert.fail("must not cache oversized model output"),
+  });
+  const response = await handler(request("Bearer token"));
+  assert.equal(response.status, 500);
+  assert.doesNotMatch(await response.text(), /😀/);
   assert.equal(released, true);
 });
 

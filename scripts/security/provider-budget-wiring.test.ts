@@ -42,7 +42,7 @@ test('both production Gemini routes reserve before SDK submission with a single 
       '@/lib/observability-runtime': {instrumentApiRoute: (_config: unknown, handler: unknown) => handler},
       '@/lib/provider-budget': {withProviderBudget: wrap},
       ...(operation === 'dm' ? {
-        '@/lib/onboarding/messages': {createMessageHandler: capture}, '@/lib/rate-limit': {},
+        '@/lib/onboarding/messages': {createMessageHandler: capture, MESSAGE_GENERATION_LEASE_MS: 120000, MESSAGE_GENERATION_TIMEOUT_MS: 60000}, '@/lib/rate-limit': {},
       } : {
         '@/lib/resume-extraction-handler': {createResumeExtractionHandler: capture, RESUME_EXTRACTION_LEASE_MS: 120000},
         '@/lib/rate-limit': {
@@ -56,14 +56,13 @@ test('both production Gemini routes reserve before SDK submission with a single 
       assert.equal(await captured!.acquire('verified-owner'), 'owner-token');
       await captured!.release('verified-owner', 'owner-token');
     }
-    const submit = () => operation === 'dm' ? captured!.generate({instructions: 'safe', data: {}}) : captured!.extract(Buffer.from('%PDF-1.4'), () => {if (ownerExpired) throw new ProviderBudgetError(503, 'concurrency', 30);});
+    const assertOwnerFresh = () => {if (ownerExpired) throw new ProviderBudgetError(503, 'concurrency', 30);};
+    const submit = () => operation === 'dm' ? captured!.generate({instructions: 'safe', data: {}}, assertOwnerFresh) : captured!.extract(Buffer.from('%PDF-1.4'), assertOwnerFresh);
     assert.equal(await submit(), 'safe model result'); assert.equal(calls, 1);
     killed = true; await assert.rejects(submit(), {status: 503}); assert.equal(calls, 1);
-    if (operation === 'resume') {
-      killed = false; delayedBudget = true;
-      await assert.rejects(submit(), {status:503});
-      assert.equal(ownerExpired, true); assert.equal(calls,1, 'expired owner lease must not start SDK after delayed global reservation');
-    }
+    killed = false; delayedBudget = true;
+    await assert.rejects(submit(), {status:503});
+    assert.equal(ownerExpired, true); assert.equal(calls,1, 'expired owner lease must not start SDK after delayed global reservation');
   }
 });
 

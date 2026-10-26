@@ -4,9 +4,12 @@ import { boundedJson } from "../bounded-json";
 import type { Company, Founder } from "../types";
 import type { OnboardingState, ResumeData, UserIntent } from "./types";
 import { getOnboardingReadiness } from "./readiness";
-import { providerBudgetResponse } from "../provider-budget";
+import { ProviderBudgetError, providerBudgetResponse } from "../provider-budget";
 
 export const PLAYBOOK_VERSION = 2;
+export const MESSAGE_GENERATION_LEASE_MS = 120_000;
+export const MESSAGE_GENERATION_TIMEOUT_MS = 60_000;
+export const MAX_MESSAGE_OUTPUT_BYTES = 16 * 1024;
 const rejectedCredentialCodes = new Set([
   "auth/argument-error",
   "auth/invalid-argument",
@@ -118,6 +121,7 @@ interface Dependencies {
   save(key: string, value: Record<string, unknown>): Promise<void>;
   generate(
     input: ReturnType<typeof buildMessageInput>,
+    assertOwnerFresh: () => void,
   ): Promise<string | undefined>;
 }
 
@@ -201,6 +205,8 @@ export function createMessageHandler(deps: Dependencies) {
       });
       const cached = await deps.getCached(key);
       if (cached) return Response.json({ dmText: cached });
+      // Start before acquisition so its storage latency cannot extend ownership.
+      const leaseStartedAt = Date.now();
       const lease = deps.acquire ? await deps.acquire(key) : undefined;
       if (lease === null)
         return Response.json(
@@ -238,10 +244,18 @@ export function createMessageHandler(deps: Dependencies) {
               headers: { "Retry-After": String(budget.retryAfterSeconds) },
             },
           );
+        const assertOwnerFresh = () => {
+          if (lease && Date.now() + MESSAGE_GENERATION_TIMEOUT_MS >= leaseStartedAt + MESSAGE_GENERATION_LEASE_MS) {
+            throw new ProviderBudgetError(503, "concurrency", 30);
+          }
+        };
+        assertOwnerFresh();
         const content = await deps.generate(
           buildMessageInput(state, target, resume),
+          assertOwnerFresh,
         );
-        if (!content?.trim()) throw new Error("Empty model response");
+        if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > MAX_MESSAGE_OUTPUT_BYTES) throw new Error("Invalid model response size");
+        if (!content.trim()) throw new Error("Empty model response");
         const now = new Date().toISOString();
         await deps.save(key, {
           ...messageIdentity(uid, state),
