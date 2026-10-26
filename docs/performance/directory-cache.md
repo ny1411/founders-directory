@@ -170,3 +170,23 @@ Investigate recurring warnings and verify a subsequent sitemap includes company
 URLs after the backend recovers. `sitemap.partition_required` means the index
 exceeds the 50,000-URL protocol limit: split the sitemap before treating metadata
 coverage as complete. No unbounded scan or quota retry is used as a fallback.
+
+## Homepage availability during backend outages
+
+The public homepage remains `force-static`; its HTML revalidates every five
+minutes while the shared directory data cache keeps its one-hour lifetime.
+If loading the index or initial company cards fails, the server renders
+“Directory temporarily unavailable” with a manual reload link. It does not
+pass fake empty results to the directory, start automatic polling, or expose
+backend exception details. A fixed `directory.home_unavailable` event identifies
+the degraded render. Component-rendering defects remain errors.
+
+This explicit unavailable page can itself be cached. After five minutes, a
+request can still receive the previous HTML while ISR regenerates in the
+background; a reload does not force a database refresh. Recovery requires a
+successful subsequent regeneration, and successful underlying data can remain
+stale for the existing one-hour cache interval. Repeated backend failures keep
+the unavailable state visible; they do not establish a healthy empty directory.
+Monitor the fixed event, resolve backend quota/availability, and verify company
+cards return after regeneration. Deployment success during a quota outage proves
+the site can serve a clear unavailable state, not that directory data is healthy.
