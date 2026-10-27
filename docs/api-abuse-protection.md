@@ -149,6 +149,18 @@ work without rechecking its supplied guard immediately before HTTP submission.
 The worker atomically claims `queued` → `submitting` under its current job lease
 **before** reserving the global budget. Only the claim winner reserves/submits; a
 delayed stale delivery cannot charge again or overwrite the replacement worker.
+Every later state write also atomically checks the worker token, logical lease
+expiry, and a nonterminal job state. A delayed provider result or Firestore read
+cannot replace a newer completion, reset its polling allowance, or release its
+owner lease. Rejected ownership throws a fixed retryable error rather than
+acknowledging unfinished work: the next delivery either resumes safe polling,
+observes the terminal result, or fails an ambiguous `submitting` job without
+another paid POST. Stale deliveries never directly schedule another poll or
+release owner work after a rejected transition. Token-fenced cleanup still
+cannot remove a replacement worker's lease.
+Terminal commits and user-lease cleanup are awaited before releasing the worker
+lease. A failed initial paid claim also requests redelivery: a slow target read
+must not acknowledge an unsubmitted queued job without scheduling recovery.
 The claim requires at least 15 seconds left on the 90-second job lease; a second
 deadline check immediately before POST also handles a slow global reservation.
 Budget/store/config/kill-switch rejection produces a terminal, proved-unsubmitted
