@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { checkBotId } from 'botid/server';
 import {
   BOT_VERIFICATION_REQUIRED_MESSAGE,
   BOT_VERIFICATION_UNAVAILABLE_MESSAGE,
@@ -82,6 +83,49 @@ test('provider failures fail closed with a stable retryable response', async () 
   assert.equal(result.outcome, 'verification_error');
   assert.equal(result.status, 503);
   assert.equal(result.message, BOT_VERIFICATION_UNAVAILABLE_MESSAGE);
+});
+
+test('malformed SDK classifications fail closed before body, database or provider work', async () => {
+  // botid@1.5.11 computes isHuman as !response.isBot, including when the
+  // provider returns an empty object. Neither missing nor truthy/falsy fields
+  // establish a verified human classification.
+  const malformed = [
+    { isHuman: true, isBot: undefined, isVerifiedBot: undefined },
+    { isHuman: true, isBot: false, isVerifiedBot: undefined },
+    { isHuman: true, isBot: null, isVerifiedBot: false },
+    { isHuman: 'true', isBot: false, isVerifiedBot: false },
+    { isHuman: true, isBot: 0, isVerifiedBot: false },
+    null,
+  ];
+  for (const classification of malformed) {
+    const events: string[] = [];
+    const post = createBotProtectedPost({
+      route: '/api/protected',
+      enabled: true,
+      requireProof: true,
+      verifyToken: async () => { events.push('auth'); return { uid: 'verified-user' }; },
+      check: async () => {
+        events.push('botid');
+        return classification as unknown as Awaited<ReturnType<typeof checkBotId>>;
+      },
+      handler: async () => {
+        events.push('database');
+        events.push('provider');
+        return Response.json({ ok: true });
+      },
+    });
+    const incoming = request({ 'x-is-human': proof });
+    const response = await post(incoming);
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('retry-after'), '30');
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    assert.deepEqual(await response.json(), {
+      error: BOT_VERIFICATION_UNAVAILABLE_MESSAGE,
+      code: 'BOT_VERIFICATION_UNAVAILABLE',
+    });
+    assert.deepEqual(events, ['auth', 'botid']);
+    assert.equal(incoming.bodyUsed, false);
+  }
 });
 
 test('BotID enforcement is default-off until the deployment flag is enabled', async () => {
