@@ -57,11 +57,13 @@ resume, contact data, or generated message:
 | Condition | HTTP | Code | Client behavior |
 | --- | --- | --- | --- |
 | Missing/malformed proof or non-human classification | `403` | `BOT_VERIFICATION_REQUIRED` | Stop; ask the user to refresh once |
-| BotID/OIDC/provider or configuration failure | `503` | `BOT_VERIFICATION_UNAVAILABLE` | Stop; retry manually after 30 seconds |
+| BotID/OIDC/provider or configuration failure, including malformed classifications | `503` | `BOT_VERIFICATION_UNAVAILABLE` | Stop; retry manually after 30 seconds |
 
 Server Actions return the same sanitized message in their existing `{ error }`
 shape. There is no automatic retry loop. Logs use only the normalized route and
 the bounded outcomes `allowed`, `bot_rejected`, or `verification_error`.
+The server requires explicit boolean SDK classification fields; an incomplete
+provider result cannot count as proof of a human request.
 
 ## Required Vercel configuration
 

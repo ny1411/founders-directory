@@ -134,7 +134,19 @@ export async function verifyBotRequest(
     const verification = await (options.check ?? checkBotId)({
       advancedOptions: { headers: incomingHeaders(requestHeaders) },
     });
-    if (verification.isHuman && !verification.isBot && !verification.isVerifiedBot) {
+    // The SDK derives isHuman from !response.isBot. A malformed provider body
+    // can therefore appear human while leaving the actual classifications
+    // undefined. Require the SDK's documented boolean shape before allowing it.
+    if (
+      typeof verification.isHuman !== 'boolean' ||
+      typeof verification.isBot !== 'boolean' ||
+      typeof verification.isVerifiedBot !== 'boolean'
+    ) {
+      const result = failure('provider_error');
+      botEvent(route, result.outcome, result.reason);
+      return result;
+    }
+    if (verification.isHuman === true && verification.isBot === false && verification.isVerifiedBot === false) {
       const result = { allowed: true, outcome: 'allowed' } as const;
       botEvent(route, result.outcome);
       return result;

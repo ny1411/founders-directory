@@ -73,6 +73,10 @@ The workflow has `contents: read`, no deployment step, and no production secrets
 GitHub's normal read-only token is used by the secret scanner. Rules tests strip
 Firebase/Google environment configuration and use the existing demo project.
 Never run these jobs with `pull_request_target` against untrusted PR code.
+Both workflows pin action revisions and disable persisted checkout credentials,
+so install/test commands do not inherit the checkout token. The secret scanner
+also fixes its downloaded Gitleaks binary version; review that version manually
+alongside Dependabot's action update PRs.
 
 Required service-side checks remain separate: enable and verify branch protection
 against the Security verification/secrets jobs; review bypass permissions and
