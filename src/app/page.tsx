@@ -3,6 +3,7 @@ import { JsonLd } from "@/components/json-ld"
 import { buildInitialDirectoryData, getDirectoryIndex } from "@/lib/directory-query"
 import type { DirectoryInitialData } from "@/lib/directory-types"
 import { Suspense } from "react"
+import { logDirectoryFailure } from "@/lib/directory-availability"
 
 export const dynamic = "force-static"
 export const revalidate = 300
@@ -40,10 +41,10 @@ export default async function Home() {
   try {
     const index = await getDirectoryIndex()
     initialData = await buildInitialDirectoryData(index)
-  } catch {
+  } catch (error) {
     // Keep builds and the cached public route available during backend outages.
     // Never publish an empty directory or expose database exception details.
-    console.warn(JSON.stringify({ event: "directory.home_unavailable" }))
+    logDirectoryFailure("directory.home_unavailable", error)
     return <DirectoryUnavailable />
   }
 

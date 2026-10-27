@@ -6,27 +6,20 @@ import type { SearchParams } from "./directory-filters"
 import type { DirectoryInitialData } from "./directory-types"
 import { getVcOptions } from "./vc-filter"
 import { createDirectoryReadFlight } from "./directory-read-flight"
-import { decodeDirectoryShard, directoryIndexRef, directoryShardRef, DIRECTORY_INDEX_SHARDS,
-  readIndexManifest } from "./directory-index"
+import { DIRECTORY_INDEX_SHARDS } from "./directory-index"
+import { loadDirectoryManifest, loadDirectoryShard } from "./directory-loader"
 
-import { buildDirectoryPage as selectDirectoryPage, loadDirectoryCompanies, logDirectoryRead,
+import { buildDirectoryPage as selectDirectoryPage, loadDirectoryCompanies,
   type DirectoryIndex } from "./directory-page"
 
 const readOnce = createDirectoryReadFlight()
 
-const getManifest = unstable_cache(() => readOnce("manifest", async () => {
-  const snapshot = await directoryIndexRef(adminDb).get()
-  logDirectoryRead("manifest", 1)
-  const manifest = readIndexManifest(snapshot.data())
-  if (!manifest.generation) throw new Error("Directory index is not initialized. Run directory:index before deploying.")
-  return manifest
-}), ["directory-index-manifest-v1"], { revalidate: DIRECTORY_REVALIDATE_SECONDS, tags: [DIRECTORY_CACHE_TAG] })
+const getManifest = unstable_cache(() => readOnce("manifest", () => loadDirectoryManifest(adminDb)),
+  ["directory-index-manifest-v1"], { revalidate: DIRECTORY_REVALIDATE_SECONDS, tags: [DIRECTORY_CACHE_TAG] })
 
-const getShard = unstable_cache((generation: string, shard: number) => readOnce(`shard:${generation}:${shard}`, async () => {
-  const snapshot = await directoryShardRef(adminDb, generation, shard).get()
-  logDirectoryRead("index", 1)
-  return decodeDirectoryShard(snapshot.data())
-}), ["directory-search-shard-v1"], { revalidate: DIRECTORY_REVALIDATE_SECONDS, tags: [DIRECTORY_CACHE_TAG] })
+const getShard = unstable_cache((generation: string, shard: number) => readOnce(`shard:${generation}:${shard}`,
+  () => loadDirectoryShard(adminDb, generation, shard)), ["directory-search-shard-v1"],
+  { revalidate: DIRECTORY_REVALIDATE_SECONDS, tags: [DIRECTORY_CACHE_TAG] })
 
 /** A compact materialized search index, not a snapshot of company card data. */
 export async function getDirectoryIndex(): Promise<DirectoryIndex> {

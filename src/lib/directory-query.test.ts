@@ -5,6 +5,7 @@ import { toDirectoryIndexEntry } from "./directory-index"
 import { paginateCompanies } from "./company-pagination"
 import { matchesDirectoryFilters, parseDirectoryFilters } from "./directory-filters"
 import { memoryFirestore } from "../../scripts/directory/memory-firestore"
+import { DirectoryAvailabilityError } from "./directory-availability"
 
 const companies = Array.from({ length: 6_013 }, (_, number) => ({
   id: `id-${String(number).padStart(5, "0")}`, slug: `company-${String(Math.floor(number / 2)).padStart(5, "0")}`,
@@ -78,5 +79,6 @@ test("oversized, duplicate and invalid ID batches fail before datastore work; st
     await assert.rejects(loadDirectoryCompanies(f.db, ids), /Invalid directory page IDs/)
   }
   assert.deepEqual(f.reads, [])
-  await assert.rejects(loadDirectoryCompanies(f.db, ["deleted-company"]), /out of sync/)
+  await assert.rejects(loadDirectoryCompanies(f.db, ["deleted-company"]),
+    error => error instanceof DirectoryAvailabilityError && error.stage === "companies" && error.reason === "company_missing")
 })

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { buildSitemap } from '../../src/lib/sitemap';
+import { DirectoryAvailabilityError } from '../../src/lib/directory-availability';
 
 const base = new URL('https://directory.example');
 
@@ -43,6 +44,15 @@ test('sitemaps beyond the protocol URL limit require partitioning instead of sil
   }), event => warnings.push(event));
   assert.equal(result.length, 1);
   assert.deepEqual(warnings, ['sitemap.partition_required']);
+});
+
+test('sitemap outage diagnostics preserve the classified backend cause without exception text', async () => {
+  const warnings: unknown[] = [];
+  const result = await buildSitemap(base, async () => {
+    throw new DirectoryAvailabilityError('manifest', 'quota_exhausted');
+  }, (event, failure) => warnings.push({ event, ...failure }));
+  assert.equal(result.length, 1);
+  assert.deepEqual(warnings, [{ event: 'sitemap.index_unavailable', stage: 'manifest', reason: 'quota_exhausted' }]);
 });
 
 test('the metadata route uses the cached bounded index and revalidates outage fallbacks', () => {

@@ -190,3 +190,37 @@ the unavailable state visible; they do not establish a healthy empty directory.
 Monitor the fixed event, resolve backend quota/availability, and verify company
 cards return after regeneration. Deployment success during a quota outage proves
 the site can serve a clear unavailable state, not that directory data is healthy.
+
+### Diagnose availability without rebuilding
+
+Outage events include finite `stage` and `reason` fields. A successful missing
+manifest read reports `manifest_uninitialized`; it is distinct from
+`quota_exhausted`, `permission_denied`, `unauthenticated`, `backend_not_found`,
+`backend_unavailable`, or `deadline`. Invalid published metadata reports
+`manifest_invalid`/`shard_invalid`; an index entry without its company reports
+`company_missing`. Unknown SDK failures remain `unknown`; exception messages,
+credential values, project IDs, document paths and company rows are never logged.
+The directory API uses the same diagnostics for quota failures and preserves its
+uncacheable 503 response. No request automatically rebuilds the index.
+
+With the intended environment's existing Firebase admin configuration, run:
+
+```bash
+node --import tsx scripts/directory/check-availability.ts --read-only
+```
+
+This uncached probe uses the public loaders, reads the manifest and sixteen
+shards, and projects at most ten first-page cards. It performs no collection
+scan or write. Its final JSON event contains only availability, fixed diagnostic
+fields, and successful document counts. Exit 0 means those reads succeeded;
+exit 1 means unavailable; exit 2 means invalid invocation. A ten-second deadline
+bounds the CLI and prevents starting later phases after expiry. Underlying SDK
+reads are not cancelled by the Promise deadline; the CLI explicitly exits so
+pending retries cannot keep it alive. Existing SDK retries may bill additional
+reads. Run only in the intended configured environment; local success/failure
+does not establish Preview or Production health, nor bypass deployment protection.
+
+Treat `manifest_uninitialized` as evidence to review the initial backfill
+prerequisites above. A backend denial, quota failure, or deadline does not prove
+the manifest is absent, and must not trigger a rebuild. A READY deployment or a
+warm cached homepage is separate from a successful uncached probe.
