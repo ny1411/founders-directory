@@ -1,4 +1,4 @@
-import { getCompany, getCompanyFounders, normalizeCompanySlug } from "@/lib/company-query"
+import { getCompany, getCompanyFounders, normalizeCompanySlug, CompanyFoundersUnavailableError } from "@/lib/company-query"
 import { notFound } from "next/navigation"
 import Image from "next/image"
 import Link from "next/link"
@@ -64,7 +64,7 @@ export async function generateMetadata(
 
 export const revalidate = 3600
 
-// Next 15 needs generateStaticParams for runtime slugs to enter the ISR cache.
+// Empty build params allow new company slugs to enter the ISR cache on first visit.
 // No company reads are needed during the build; each slug renders on first visit.
 export async function generateStaticParams(): Promise<Array<{ slug: string }>> {
   return []
@@ -78,9 +78,13 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
     notFound()
   }
 
-  const founders = await getCompanyFounders(companyData.id);
+  const founders = await getCompanyFounders(companyData.id, normalizeCompanySlug(params.slug)!).catch((error: unknown) => {
+    if (!(error instanceof CompanyFoundersUnavailableError)) throw error;
+    console.warn(JSON.stringify({ event: "company.founders_unavailable", reason: error.reason }));
+    return null;
+  });
 
-  const company = { ...companyData, founders: founders.map(publicFounder) };
+  const company = { ...companyData, founders: founders?.map(publicFounder) ?? null };
   const companyLogoUrl = normalizeImageUrl(company.logoUrl);
 
   const jsonLd = {
@@ -266,6 +270,12 @@ export default async function CompanyPage(props: { params: Promise<{ slug: strin
       </section>
 
       {/* Founders Section */}
+      {company.founders === null && (
+        <section className="pt-10 border-t border-border" aria-labelledby="founding-team-title">
+          <h2 id="founding-team-title" className="font-serif text-3xl text-foreground mb-4">Founding Team</h2>
+          <p className="text-secondary-foreground">Founding team temporarily unavailable. Please try again later.</p>
+        </section>
+      )}
       {company.founders && company.founders.length > 0 && (
         <section className="pt-10 border-t border-border">
           <div className="flex items-center justify-between mb-8">
