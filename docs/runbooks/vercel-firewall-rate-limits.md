@@ -182,7 +182,18 @@ vercel --scope ny1411 firewall alerts list --project prj_oxUZTfhN9aAIwtcABk8dcX0
 vercel --scope ny1411 firewall traffic inspect rule <ruleId> --project prj_oxUZTfhN9aAIwtcABk8dcX00nFvt --since 1h --group-by ip --json
 ```
 
-Keep Production observation rules intact. Add a **separate** Preview rule with the same method/path and candidate action, `environment = preview`, and a unique secret probe header condition. For a bounded homepage test, use `GET /`, key `ip`, window 60 seconds, limit 3, exceeded action `rate_limit`, plus `header x-fd-firewall-probe = <random 32+ character value>`. Never use a production URL or production limits to generate load. Inspect its conditions/diff, have the owner publish, and use a fresh header value so previous counters cannot affect the run.
+Keep Production observation rules intact. Add a **separate** rule named exactly
+`FD #40 preview homepage probe`, with `environment = preview`, `host` equal to
+the immutable Preview deployment hostname, `method = GET`, `path = /`, and
+`header x-fd-firewall-probe = <random 32–128 URL-safe characters>`; all five
+conditions use exact equality in one AND group. Use key `ip`, algorithm
+`fixed_window`, window 60 seconds, limit 3 and exceeded action `rate_limit`.
+`previewProbeRule()` in `scripts/security/firewall-preview.mjs` defines that
+exact candidate. Never use a production URL or production limits to generate
+load. Inspect its conditions/diff and have the owner publish. Start with unused
+rule counters or wait out the window; a new secret header value alone does not
+prove that the rule's per-IP counters reset. Keep the header and bypass secret
+out of committed config, terminal transcripts and shared artifacts.
 
 ```bash
 # Set FIREWALL_PROBE_KEY locally to the exact secret value in the Preview rule.
@@ -192,7 +203,35 @@ Keep Production observation rules intact. Add a **separate** Preview rule with t
 node scripts/security/firewall-preview-probe.mjs dpl_PREVIEW_DEPLOYMENT_ID
 ```
 
-The probe verifies deployment ownership and non-production target through Vercel's API before sending at most eight sequential GET/HEAD requests. It checks below/above-threshold responses and unrelated method/path/unmarked traffic. Redirects are not followed. If Vercel Authentication blocks the preview, create a narrowly scoped automation bypass in Deployment Protection and supply its secret through the local environment or CI secret store. The script sends the bypass only to the verified Preview deployment and never prints it. Do not disable deployment protection or use this secret against Production; the bypass does not bypass application BotID. Validate each expensive endpoint's rule separately with unauthenticated/invalid requests or mocked providers in Preview; never spend real enrichment credits or AI quota to test a firewall. Check the rule ID in Firewall traffic and confirm requests blocked at the edge did not invoke Functions; an application-generated 429 alone does not prove edge enforcement. Real verified-crawler behavior requires traffic review; spoofing a Googlebot user agent is insufficient.
+The probe verifies the READY deployment ID/project/Preview target and the
+explicit team's **active** Firewall configuration before sending traffic. It
+requires the one valid, active probe rule to match the exact hostname, secret,
+method, path, environment and rate policy above. Draft-only rules, duplicate
+names, scope/threshold drift, disabled protection and earlier potentially
+terminal custom rules stop without application requests. CLI reads pin team
+and project IDs, bound metadata output, and do not echo raw errors or secrets.
+
+The probe sends at most eight sequential GET/HEAD requests, with no retries or
+redirect following: three unrelated path/method/unmarked controls must each
+return 2xx, then three marked requests must return 2xx and two must return 429.
+Auth redirects, denied controls and Security Checkpoint 429s fail the probe;
+they are not healthy navigation or rate-limit evidence. A run taking a full
+rate window is inconclusive, as are counter/window/region changes. No response
+bodies are retained. Local regression tests exercise these cases without
+network traffic and run in the existing Firewall test suite.
+
+If Vercel Authentication blocks Preview, supply an approved narrowly scoped
+automation bypass secret through the local environment or CI secret store.
+The script sends it only to the verified Preview deployment and never prints
+it. Do not disable deployment protection, managed Bot Protection or BotID to
+make a probe pass. Validate each expensive endpoint's rule separately with
+unauthenticated/invalid requests or mocked providers in Preview; never spend
+real enrichment credits or AI quota to test a firewall. Even a passing probe
+reports `edgeAttributionVerified=false`: corroborate the reported rule ID in
+Firewall traffic and verify no Function invocation for the blocked requests.
+An application-generated 429 or managed challenge can otherwise be mistaken
+for the candidate's rate limit. Real verified-crawler behavior requires
+traffic review; spoofing a Googlebot user agent is insufficient.
 
 After Preview verification **and** owner review of Production observations, stage the Production exceeded action change to `rate_limit` (or company-page `challenge`) with `rules edit`, retaining every environment/method/path condition. Inspect each rule and complete diff again, then have the owner publish. Do not tighten thresholds at the same time as first enforcing. Monitor for 24 hours and record CPU trends, unexpected 429/challenges and reports from legitimate users. Remove/disable temporary preview probe rules through a reviewed draft after testing.
 

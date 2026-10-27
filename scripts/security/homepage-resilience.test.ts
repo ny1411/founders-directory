@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
 import type { DirectoryInitialData } from '../../src/lib/directory-types';
 import { DIRECTORY_REVALIDATE_SECONDS } from '../../src/lib/directory-cache';
+import { directoryFailure } from '../../src/lib/directory-availability';
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL('../../src/app/page.tsx', import.meta.url), 'utf8');
@@ -29,6 +30,9 @@ function fixture(failure?: 'index' | 'cards' | 'render') {
     console: { warn: (message: string) => warnings.push(message) },
     require(name: string) {
       if (name === 'react' || name === 'react/jsx-runtime') return require(name);
+      if (name === '@/lib/directory-availability') return {
+        logDirectoryFailure: (event: string, error: unknown) => warnings.push(JSON.stringify({ event, ...directoryFailure(error) })),
+      };
       if (name === '@/lib/directory-query') return {
         async getDirectoryIndex() {
           calls.push('index');
@@ -69,7 +73,7 @@ for (const failure of ['index', 'cards'] as const) {
     assert.doesNotMatch(html, /data-directory|0 companies|private|quota|database|application\/ld\+json/);
     assert.deepEqual(f.received, []);
     assert.deepEqual(f.calls, failure === 'index' ? ['index'] : ['index', 'cards']);
-    assert.deepEqual(f.warnings, ['{"event":"directory.home_unavailable"}']);
+    assert.deepEqual(f.warnings, ['{"event":"directory.home_unavailable","stage":"unknown","reason":"unknown"}']);
   });
 }
 

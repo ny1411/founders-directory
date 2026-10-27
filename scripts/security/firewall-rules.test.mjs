@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { addRuleArgs, missingRules, observationRules } from './firewall-rules.mjs';
+import { projectId, teamId } from './firewall-rules.mjs';
+import { previewProbeRule, runPreviewProbe, verifyPreviewRule } from './firewall-preview.mjs';
 
 test('every observation rule scopes environment, method and path and only logs exceeded limits', () => {
   const rules = observationRules();
@@ -120,4 +122,113 @@ test('profile aliases share one write budget and public routes do not match all 
   assert.equal(homepage.action.mitigate.rateLimit.limit, 100);
   const enrichment = rules.find(rule => rule.name.endsWith('enrichment'));
   assert.equal(enrichment.action.mitigate.rateLimit.limit, 10);
+});
+
+const previewId = 'dpl_previewFixture';
+const probeKey = 'probe-fixture-'.repeat(4);
+function previewFixture() {
+  const deployment = { id: previewId, projectId, target: null, readyState: 'READY', url: 'preview-fixture.vercel.app' };
+  const rule = { ...previewProbeRule(deployment, probeKey), id: 'rule_previewFixture', valid: true };
+  const snapshot = { projectKey: `${projectId}#active`, ownerId: teamId, version: 3, firewallEnabled: true, rules: [rule] };
+  return { deployment, deploymentId: previewId, snapshot, key: probeKey, log() {} };
+}
+
+test('Preview probe performs no requests for wrong deployments, drafts, unscoped or drifted rules', async () => {
+  for (const mutate of [
+    f => { f.deployment.target = 'production'; },
+    f => { delete f.deployment.target; },
+    f => { f.deployment.projectId = 'another-project'; },
+    f => { f.deployment.readyState = 'BUILDING'; },
+    f => { f.deployment.url = 'another-origin.example'; },
+    f => { f.deployment.id = 'dpl_another'; },
+    f => { f.snapshot.projectKey = `${projectId}#draft`; },
+    f => { f.snapshot.ownerId = 'another-team'; },
+    f => { f.snapshot.firewallEnabled = false; },
+    f => { f.snapshot = { draft: f.snapshot }; },
+    f => { f.snapshot.rules = []; },
+    f => { f.snapshot.rules.push(structuredClone(f.snapshot.rules[0])); },
+    f => { f.snapshot.rules[0].active = false; },
+    f => { f.snapshot.rules[0].valid = false; },
+    f => { f.snapshot.rules[0].conditionGroup[0].conditions = f.snapshot.rules[0].conditionGroup[0].conditions.filter(c => c.type !== 'host'); },
+    f => { f.snapshot.rules[0].conditionGroup[0].conditions.find(c => c.type === 'environment').value = 'production'; },
+    f => { f.snapshot.rules[0].conditionGroup[0].conditions.find(c => c.type === 'header').value = 'another-key'; },
+    f => { f.snapshot.rules[0].action.mitigate.rateLimit.action = 'log'; },
+    f => { f.snapshot.rules[0].action.mitigate.rateLimit.limit = 100; },
+    f => { f.snapshot.rules[0].action.mitigate.rateLimit.window = 600; },
+    f => { f.snapshot.rules.unshift({ active: true, action: { mitigate: { action: 'bypass' } } }); },
+  ]) {
+    const fixture = previewFixture();
+    mutate(fixture);
+    let sent = 0;
+    await assert.rejects(runPreviewProbe({ ...fixture, fetchImpl: async () => { sent++; throw new Error('must not request'); } }), /no traffic sent/);
+    assert.equal(sent, 0);
+  }
+});
+
+test('Preview probe accepts reordered active API defaults, never a preferred but unpublished draft', () => {
+  const f = previewFixture();
+  const rule = f.snapshot.rules[0];
+  rule.conditionGroup[0].conditions.reverse();
+  rule.conditionGroup[0].conditions.forEach(condition => { condition.neg = false; });
+  rule.action.mitigate.actionDuration = null;
+  rule.action.mitigate.redirect = null;
+  assert.deepEqual(verifyPreviewRule({ result: { active: f.snapshot, draft: { rules: [] } } }, f.deployment, probeKey), { ruleId: rule.id, configVersion: 3 });
+  assert.throws(() => verifyPreviewRule({ active: { ...f.snapshot, rules: [] }, draft: f.snapshot }, f.deployment, probeKey), /no traffic sent/);
+});
+
+test('Preview requests are sequential, capped at eight and keep credentials off logs and results', async () => {
+  const calls = [];
+  const logs = [];
+  const f = previewFixture();
+  let inFlight = 0;
+  let cancellations = 0;
+  const result = await runPreviewProbe({ ...f, bypass: 'private-bypass-secret', log: line => logs.push(line), fetchImpl: async (url, options) => {
+    assert.equal(inFlight++, 0);
+    await Promise.resolve();
+    calls.push({ url, options });
+    inFlight--;
+    return { status: calls.length <= 6 ? 200 : 429, body: { async cancel() { cancellations++; } } };
+  } });
+  assert.equal(calls.length, 8);
+  assert.equal(cancellations, 8);
+  assert.deepEqual(calls.map(c => c.options.method), ['GET', 'HEAD', 'GET', 'GET', 'GET', 'GET', 'GET', 'GET']);
+  assert.equal(calls[2].options.headers['x-fd-firewall-probe'], undefined);
+  for (const call of calls) {
+    assert.ok(call.url.startsWith('https://preview-fixture.vercel.app/'));
+    assert.equal(call.options.headers['x-vercel-protection-bypass'], 'private-bypass-secret');
+    assert.equal(call.options.redirect, 'manual');
+    assert.ok(call.options.signal instanceof AbortSignal);
+  }
+  assert.equal(result.requestBehaviorPassed, true);
+  assert.equal(result.edgeAttributionVerified, false, '429 responses still need rule traffic and Function corroboration');
+  assert.equal(result.ruleId, 'rule_previewFixture');
+  assert.ok(!JSON.stringify({ logs, result }).includes(probeKey));
+  assert.ok(!JSON.stringify({ logs, result }).includes('private-bypass-secret'));
+});
+
+test('Preview auth denials, redirects and managed checkpoint 429s fail controls before exercising limits', async () => {
+  for (const status of [302, 401, 403, 404, 429, 500]) {
+    let sent = 0;
+    await assert.rejects(runPreviewProbe({ ...previewFixture(), fetchImpl: async () => {
+      sent++; return { status, body: { async cancel() {} } };
+    } }), /control failed/);
+    assert.equal(sent, 1);
+  }
+});
+
+test('Preview requires all three below-limit successes and two above-limit 429s without retrying', async () => {
+  for (const statuses of [[200, 200, 200, 200, 200, 429], [200, 200, 200, 200, 200, 200, 200], [200, 200, 200, 200, 200, 200, 429, 403]]) {
+    let sent = 0;
+    await assert.rejects(runPreviewProbe({ ...previewFixture(), fetchImpl: async () => ({ status: statuses[sent++], body: { async cancel() {} } }) }), /threshold behavior failed/);
+    assert.equal(sent, statuses.length);
+  }
+});
+
+test('Preview window expiry and transport errors are inconclusive and cannot echo secret errors', async () => {
+  let sent = 0;
+  await assert.rejects(runPreviewProbe({ ...previewFixture(), now: () => sent >= 4 ? 60_000 : 0, fetchImpl: async () => {
+    sent++; return { status: 200, body: { async cancel() {} } };
+  } }), /exceeded its rate window/);
+  assert.equal(sent, 4);
+  await assert.rejects(runPreviewProbe({ ...previewFixture(), fetchImpl: async () => { throw new Error(probeKey); } }), error => !error.message.includes(probeKey) && /request failed/.test(error.message));
 });

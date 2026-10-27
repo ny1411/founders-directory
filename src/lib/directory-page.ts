@@ -3,6 +3,7 @@ import { matchesDirectoryFilters, parseDirectoryFilters, parsePage, type SearchP
 import { paginateCompanies } from "./company-pagination"
 import type { DirectoryCompany, DirectoryPageData } from "./directory-types"
 import type { DirectoryIndexEntry } from "./directory-index"
+import { DirectoryAvailabilityError, directoryRead } from "./directory-availability"
 
 export const DIRECTORY_PAGE_SIZE = 10
 export const DIRECTORY_FIELDS = ["slug", "name", "oneLiner", "description", "logoUrl", "vcBacker",
@@ -23,14 +24,14 @@ export async function loadDirectoryCompanies(db: Firestore, ids: string[]): Prom
   if (ids.length > DIRECTORY_PAGE_SIZE || new Set(ids).size !== ids.length ||
     ids.some(id => !id || id.includes("/"))) throw new Error("Invalid directory page IDs")
   if (!ids.length) return []
-  const documents = await db.getAll(...ids.map(id => db.collection("companies").doc(id)),
-    { fieldMask: [...DIRECTORY_FIELDS] })
+  const documents = await directoryRead("companies", () => db.getAll(...ids.map(id => db.collection("companies").doc(id)),
+    { fieldMask: [...DIRECTORY_FIELDS] }))
   logDirectoryRead("companies", documents.length)
   const byId = new Map(documents.map(document => [document.id, document]))
   // BatchGet response order is not guaranteed. Reapply the stable index ordering.
   return ids.map(id => {
     const document = byId.get(id)
-    if (!document?.exists) throw new Error("Directory index is out of sync; rebuild it before serving this page")
+    if (!document?.exists) throw new DirectoryAvailabilityError("companies", "company_missing")
     return { ...document.data(), id } as DirectoryCompany
   })
 }

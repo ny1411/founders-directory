@@ -14,6 +14,7 @@ const index: DirectoryIndex = {
   ],
   batches: ['Winter 2026', 'Custom Cohort'], vcs: ['YC', 'Other VC'],
 };
+import { directoryRead, logDirectoryFailure } from '../../src/lib/directory-availability';
 
 const compiled = ts.transpileModule(readFileSync(new URL('../../src/app/api/directory/route.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -28,6 +29,7 @@ function fixture(options: { denied?: boolean; failQuota?: boolean; failSnapshot?
     require(name: string) {
       if (name === '@/lib/firebase-admin') return { adminDb: {} };
       if (name === '@/lib/directory-request') return { hasKnownDirectoryFacets, parseDirectoryRequest };
+      if (name === '@/lib/directory-availability') return { directoryRead, logDirectoryFailure };
       if (name === '@/lib/rate-limit') return {
         requestIp: () => 'trusted-ip',
         reserveQuota: async (_db: unknown, scope: string, uid: string, ip: string, limits: unknown) => {

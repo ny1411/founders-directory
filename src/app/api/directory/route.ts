@@ -3,6 +3,7 @@ import { hasKnownDirectoryFacets, parseDirectoryRequest } from "@/lib/directory-
 import { adminDb } from "@/lib/firebase-admin"
 import { requestIp, reserveQuota } from "@/lib/rate-limit"
 import { instrumentApiRoute } from "@/lib/observability-runtime"
+import { directoryRead, logDirectoryFailure } from "@/lib/directory-availability"
 
 export const dynamic = "force-dynamic"
 
@@ -31,9 +32,9 @@ async function directoryGet(request: Request) {
   try {
     // CDN hits need no origin work. Cache misses must reserve a durable IP quota
     // before loading the compact index or reading any company page records.
-    const quota = await reserveQuota(adminDb, "directory-search", "", requestIp(request), [
+    const quota = await directoryRead("quota", () => reserveQuota(adminDb, "directory-search", "", requestIp(request), [
       { name: "search-ip-minute", subject: "ip", limit: 60, windowMs: 60000 },
-    ])
+    ]))
     if (!quota.allowed) {
       return Response.json({ error: "Too many searches. Try again shortly." }, {
         status: 429,
@@ -55,7 +56,7 @@ async function directoryGet(request: Request) {
       },
     })
   } catch (error) {
-    console.error("Directory search failed", error)
+    logDirectoryFailure("directory.query_unavailable", error)
     return Response.json({ error: "Search is temporarily unavailable. Please try again." }, {
       status: 503, headers: { "Cache-Control": "no-store" },
     })

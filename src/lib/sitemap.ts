@@ -1,4 +1,5 @@
 import type { MetadataRoute } from 'next';
+import { directoryFailure } from './directory-availability';
 
 const MAX_SITEMAP_URLS = 50_000;
 type SitemapIndex = { entries: Array<{ slug: string }> };
@@ -7,7 +8,8 @@ type SitemapIndex = { entries: Array<{ slug: string }> };
 export async function buildSitemap(
   baseUrl: URL,
   loadIndex: () => Promise<SitemapIndex>,
-  warn: (event: string) => void = event => console.warn(event),
+  warn: (event: string, failure?: ReturnType<typeof directoryFailure>) => void =
+    (event, failure) => console.warn(JSON.stringify({ event, ...failure })),
 ): Promise<MetadataRoute.Sitemap> {
   const root: MetadataRoute.Sitemap = [{
     url: new URL('/', baseUrl).toString(),
@@ -17,10 +19,10 @@ export async function buildSitemap(
   let index: SitemapIndex;
   try {
     index = await loadIndex();
-  } catch {
+  } catch (error) {
     // A temporary backend outage must not prevent deploying the application.
     // The route revalidates so this root-only fallback is not permanent.
-    warn('sitemap.index_unavailable');
+    warn('sitemap.index_unavailable', directoryFailure(error));
     return root;
   }
   const slugs = new Set(index.entries.map(entry => entry.slug.trim().toLowerCase())
